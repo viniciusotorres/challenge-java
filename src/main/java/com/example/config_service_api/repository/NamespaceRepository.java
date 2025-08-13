@@ -7,4 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface NamespaceRepository extends JpaRepository <NamespaceEntity, UUID> {
+    Optional<NamespaceEntity> findByName(String name);
+
+    boolean existsByName(String name);
 }

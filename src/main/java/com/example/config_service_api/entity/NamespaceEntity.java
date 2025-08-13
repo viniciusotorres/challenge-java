@@ -1,5 +1,7 @@
 package com.example.config_service_api.entity;
 
+import com.example.config_service_api.dto.EnvironmentResponseDto;
+import com.example.config_service_api.dto.NamespaceSummaryDto;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
