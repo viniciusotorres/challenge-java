@@ -5,14 +5,15 @@ import com.example.config_service_api.entity.EnvironmentEntity;
 import com.example.config_service_api.entity.NamespaceEntity;
 import com.example.config_service_api.repository.EnvironmentRepository;
 import com.example.config_service_api.repository.NamespaceRepository;
-import jakarta.persistence.EntityExistsException;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 
 import org.springframework.data.domain.Pageable;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -32,46 +33,49 @@ public class EnvironmentService {
     }
 
     public ResponseDto<EnvironmentResponseDto> createEnvironment(EnvironmentCreateDto dto) {
-        logger.info("Criando ambiente - Nome: {}", dto.name());
+        String serviceName = "EnvironmentService";
+        String operation = "CREATE_ENVIRONMENT";
+        UUID namespaceId = dto.namespaceId();
+        String environmentName = dto.name();
 
-        logger.info("Buscando namespace - ID: {}", dto.namespaceId());
-        Optional<NamespaceEntity> namespaceOpt = namespaceRepository.findById(dto.namespaceId());
+        logger.info("[{}] [{}] Iniciando criação de ambiente. Nome: {}, Namespace: {}", serviceName, operation, environmentName, namespaceId);
 
-        if (namespaceOpt.isEmpty()) {
-            logger.warn("Namespace não encontrado - ID: {}", dto.namespaceId());
-            throw new EntityNotFoundException("Namespace não encontrado");
+        logger.debug("[{}] [{}] Buscando namespace no repositório. Namespace ID: {}", serviceName, operation, namespaceId);
+        NamespaceEntity namespace = namespaceRepository.findById(dto.namespaceId())
+                .orElseThrow(() -> new EntityNotFoundException("Namespace não encontrado"));
+
+        logger.info("[{}] [{}] Namespace encontrado. ID: {}, Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
+
+        if (environmentRepository.existsByName(environmentName)) {
+            logger.warn("[{}] [{}] Ambiente duplicado detectado. Nome: {}", serviceName, operation, environmentName);
+            throw new DataIntegrityViolationException(
+                    String.format("Ambiente com nome '%s' já existe no namespace %s", environmentName, namespaceId)
+            );
         }
 
+        EnvironmentEntity environment = buildEnvironment(dto, namespace);
 
-        logger.info("Namespace encontrado - ID: {}, Nome: {}", namespaceOpt.get().getId(), namespaceOpt.get().getName());
+        logger.debug("[{}] [{}] Persistindo ambiente no banco. Nome: {}, Namespace: {}", serviceName, operation, environmentName, namespaceId);
 
-        if (environmentRepository.existsByName(dto.name())) {
-            logger.warn("Ambiente já existe - Nome: {}", dto.name());
-            throw new DataIntegrityViolationException("Ambiente com nome já existente");
-        }
-
-        EnvironmentEntity environment = buildEnvironment(dto, namespaceOpt);
-
-        saveEnvironment(environment);
+        environmentRepository.save(environment);
 
         EnvironmentResponseDto responseDto = toResponseDto(environment);
 
-        logger.info("Ambiente criado com sucesso - ID: {}, Nome: {}", environment.getId(), environment.getName());
+        logger.info("[{}] [{}] Ambiente criado com sucesso. ID: {}, Nome: {}, Namespace: {}", serviceName, operation, environment.getId(), environmentName, namespaceId);
 
         return ResponseDto.<EnvironmentResponseDto>builder()
                 .data(responseDto)
-                .message("Ambiente criado com sucesso")
+                .message(String.format("Ambiente '%s' criado com sucesso no namespace %s", environmentName, namespaceId))
                 .success(true)
                 .statusCode(201)
                 .build();
     }
 
-    private EnvironmentEntity buildEnvironment(EnvironmentCreateDto dto, Optional<NamespaceEntity> namespaceOpt) {
+    private EnvironmentEntity buildEnvironment(EnvironmentCreateDto dto, NamespaceEntity namespace) {
+        logger.debug("Construindo entidade de ambiente - Nome: {}, Namespace ID: {}", dto.name(), namespace.getId());
         return EnvironmentEntity.builder()
                 .name(dto.name())
-                .namespace(namespaceOpt.get())
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
+                .namespace(namespace)
                 .build();
     }
 
@@ -90,108 +94,143 @@ public class EnvironmentService {
         );
     }
 
-    private void saveEnvironment(EnvironmentEntity environment) {
-        logger.info("Persistindo ambiente no banco - Nome: {}", environment.getName());
-        environmentRepository.save(environment);
-    }
-
     public ResponseDto<PageableDto<EnvironmentResponseDto>> listEnvironments(Pageable pageable) {
-        logger.info("Listando ambientes com paginação - Página: {}, Tamanho: {}",
-                pageable.getPageNumber(), pageable.getPageSize());
+        String serviceName = "EnvironmentService";
+        String operation = "LIST_ENVIRONMENTS";
 
-        var environments = environmentRepository.findAll(pageable);
+        logger.info("[{}] [{}] Iniciando listagem de configurações com paginação. Página: {}, Tamanho: {}", serviceName, operation, pageable.getPageNumber(), pageable.getPageSize());
 
-        List<EnvironmentResponseDto> contentDto = environments.getContent()
-                .stream()
-                .map(this::toResponseDto)
-                .toList();
+        Page<EnvironmentResponseDto> dtoPage = environmentRepository.findAll(pageable)
+                .map(this::toResponseDto);
 
-       PageableDto<EnvironmentResponseDto> pageableDto = PageableDto.<EnvironmentResponseDto>builder()
-                .content(contentDto)
-                .currentPage(environments.getNumber())
-                .pageSize(environments.getSize())
-                .totalElements((int) environments.getTotalElements())
-                .totalPages(environments.getTotalPages())
-               .first(environments.isFirst())
+        PageableDto<EnvironmentResponseDto> pageableDto = PageableDto.<EnvironmentResponseDto>builder()
+                .content(dtoPage.getContent())
+                .currentPage(dtoPage.getNumber() + 1)
+                .pageSize(dtoPage.getSize())
+                .totalElements(dtoPage.getTotalElements())
+                .totalPages(dtoPage.getTotalPages())
+                .first(dtoPage.isFirst())
+                .last(dtoPage.isLast())
                 .build();
 
-        logger.info("Ambientes encontrados - Total: {}", pageableDto.totalElements());
+        logger.info("[{}] [{}] Listagem de configurações concluída. Total de elementos: {}, Total de páginas: {}", serviceName, operation, dtoPage.getTotalElements(), dtoPage.getTotalPages());
+
+        String message = buildListMessage(pageableDto, "ambiente");
 
         return ResponseDto.<PageableDto<EnvironmentResponseDto>>builder()
                 .data(pageableDto)
-                .message("Ambientes listados com sucesso")
+                .message(message)
                 .success(true)
                 .statusCode(200)
                 .build();
     }
 
+    private String buildListMessage(PageableDto<?> pageableDto, String entityName) {
+        long totalElements = pageableDto.totalElements();
+        int currentPage = pageableDto.currentPage();
+        int totalPages = pageableDto.totalPages();
+        int pageSize = pageableDto.pageSize();
+
+        if (totalElements == 0) {
+            return String.format(
+                    "Nenhum %s encontrado. Página %d de %d, Tamanho da página: %d",
+                    entityName, currentPage, totalPages, pageSize
+            );
+        } else if (totalElements == 1) {
+            return String.format(
+                    "1 %s encontrado. Página %d de %d, Tamanho da página: %d",
+                    entityName, currentPage, totalPages, pageSize
+            );
+        } else {
+            return String.format(
+                    "%d %ss encontrados. Página %d de %d, Tamanho da página: %d",
+                    totalElements, entityName, currentPage, totalPages, pageSize
+            );
+        }
+    }
+
     public ResponseDto<EnvironmentResponseDto> updateEnvironment(UUID id, EnvironmentUpdateDto dto) {
-        logger.info("Atualizando ambiente - ID: {}, Nome: {}", id, dto.name());
+        String serviceName = "EnvironmentService";
+        String operation = "UPDATE_ENVIRONMENT";
 
-        return environmentRepository.findById(id)
-                .map(environment -> {
-                    if (!environment.getName().equals(dto.name()) && environmentRepository.existsByName(dto.name())) {
-                        logger.warn("Ambiente com nome já existente - Nome: {}", dto.name());
-                        throw new DataIntegrityViolationException("Ambiente com nome já existente");
-                    }
+        logger.info("[{}] [{}] Iniciando atualização de ambiente. ID: {}, Nome: {}", serviceName, operation, id, dto.name());
 
-                    environment.setName(dto.name());
-                    environment.setUpdatedAt(LocalDateTime.now());
-                    saveEnvironment(environment);
-
-                    EnvironmentResponseDto responseDto = toResponseDto(environment);
-
-                    logger.info("Ambiente atualizado com sucesso - ID: {}, Nome: {}", environment.getId(), environment.getName());
-
-                    return ResponseDto.<EnvironmentResponseDto>builder()
-                            .data(responseDto)
-                            .message("Ambiente atualizado com sucesso")
-                            .success(true)
-                            .statusCode(200)
-                            .build();
-                })
-                .orElseGet(() -> {
-                    logger.warn("Ambiente não encontrado para atualização - ID: {}", id);
-                    throw new EntityNotFoundException("Ambiente não encontrado");
+        EnvironmentEntity environment = environmentRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("[{}] [{}] Ambiente não encontrado para atualização - ID: {}", serviceName, operation, id);
+                    return new EntityNotFoundException("Ambiente não encontrado");
                 });
+
+        logger.debug("[{}] [{}] Ambiente encontrado.  ID: {}, Nome: {}", serviceName, operation, environment.getId(), environment.getName());
+
+        if (!environment.getName().equals(dto.name()) && environmentRepository.existsByName(dto.name())) {
+            logger.warn("[{}] [{}] Nome de ambiente duplicado detectado - Nome: {}", serviceName, operation, dto.name());
+            throw new DataIntegrityViolationException("Ambiente com nome já existente");
+        }
+
+        environment.setName(dto.name());
+
+        logger.debug("[{}] [{}] Persistindo atualização no banco. ID: {}, Novo Nome: {}", serviceName, operation, environment.getId(), dto.name());
+
+        environmentRepository.save(environment);
+
+        EnvironmentResponseDto responseDto = toResponseDto(environment);
+
+        logger.info("[{}] [{}] Ambiente atualizado com sucesso - ID: {}, Nome: {}", serviceName, operation, environment.getId(), environment.getName());
+
+        return ResponseDto.<EnvironmentResponseDto>builder()
+                .data(responseDto)
+                .message(String.format("Ambiente '%s' atualizado com sucesso", environment.getName()))
+                .success(true)
+                .statusCode(200)
+                .build();
     }
 
     public ResponseDto<EnvironmentResponseDto> getEnvironmentById(UUID id) {
-        logger.info("Buscando ambiente por ID - ID: {}", id);
+        String serviceName = "ConfigService";
+        String operation = "GET_ENVIRONMENT_BY_ID";
 
-        return environmentRepository.findById(id)
-                .map(environment -> {
-                    EnvironmentResponseDto responseDto = toResponseDto(environment);
-                    logger.info("Ambiente encontrado - ID: {}, Nome: {}", environment.getId(), environment.getName());
-                    return ResponseDto.<EnvironmentResponseDto>builder()
-                            .data(responseDto)
-                            .message("Ambiente encontrado")
-                            .success(true)
-                            .statusCode(200)
-                            .build();
-                })
-                .orElseGet(() -> {
-                    logger.warn("Ambiente não encontrado - ID: {}", id);
-                    throw new EntityNotFoundException("Ambiente não encontrado");
+        logger.info("[{}] [{}] Iniciando busca de ambiente por ID: {}", serviceName, operation, id);
+
+        EnvironmentEntity environment = environmentRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("[{}] [{}] Ambiente não encontrado - ID: {}", serviceName, operation, id);
+                    return new EntityNotFoundException("Ambiente não encontrado");
                 });
+
+        EnvironmentResponseDto responseDto = toResponseDto(environment);
+
+        logger.info("[{}] [{}] Ambiente encontrado com sucesso - ID: {}, Nome: {}", serviceName, operation, environment.getId(), environment.getName());
+
+        return ResponseDto.<EnvironmentResponseDto>builder()
+                .data(responseDto)
+                .message(String.format("Ambiente '%s' encontrado com sucesso", environment.getName()))
+                .success(true)
+                .statusCode(200)
+                .build();
     }
 
     public ResponseDto<Void> deleteEnvironment(UUID id) {
-        logger.info("Deletando ambiente - ID: {}", id);
+        String serviceName = "ConfigService";
+        String operation = "DELETE_ENVIRONMENT";
 
-        return environmentRepository.findById(id)
-                .map(environment -> {
-                    environmentRepository.delete(environment);
-                    logger.info("Ambiente deletado com sucesso - ID: {}", id);
-                    return ResponseDto.<Void>builder()
-                            .message("Ambiente deletado com sucesso")
-                            .success(true)
-                            .statusCode(204)
-                            .build();
-                })
-                .orElseGet(() -> {
-                    logger.warn("Ambiente não encontrado para deleção - ID: {}", id);
-                    throw new EntityNotFoundException("Ambiente não encontrado");
+        logger.info("[{}] [{}] Iniciando exclusão de ambiente - ID: {}", serviceName, operation, id);
+
+        EnvironmentEntity environment = environmentRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("[{}] [{}] Ambiente não encontrado para exclusão - ID: {}", serviceName, operation, id);
+                    return new EntityNotFoundException("Ambiente não encontrado");
                 });
+
+        environmentRepository.delete(environment);
+
+        logger.info("[{}] [{}] Ambiente excluído com sucesso - ID: {}, Nome: {}", serviceName, operation, environment.getId(), environment.getName());
+
+        return ResponseDto.<Void>builder()
+                .message(String.format("Ambiente '%s' excluído com sucesso", environment.getName()))
+                .success(true)
+                .statusCode(200)
+                .build();
     }
+
 }
