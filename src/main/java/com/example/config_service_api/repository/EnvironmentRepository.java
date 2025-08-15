@@ -11,7 +11,6 @@ import java.util.UUID;
 
 public interface EnvironmentRepository extends JpaRepository<EnvironmentEntity, UUID> {
     boolean existsByName(String name);
-    boolean existsByNamespaceIdAndName(UUID namespaceId, String name);
     Page<EnvironmentEntity> findByNamespaceId(UUID namespaceId, Pageable pageable);
-    Optional<EnvironmentEntity> findByName(String name);
+    boolean existsByNamespaceId(UUID namespaceId);
 }

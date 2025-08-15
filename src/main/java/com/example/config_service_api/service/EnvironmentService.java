@@ -13,6 +13,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 
 import org.springframework.data.domain.Pageable;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,6 +33,7 @@ public class EnvironmentService {
         this.namespaceRepository = namespaceRepository;
     }
 
+    @Transactional
     public ResponseDto<EnvironmentResponseDto> createEnvironment(EnvironmentCreateDto dto) {
         String serviceName = "EnvironmentService";
         String operation = "CREATE_ENVIRONMENT";
@@ -94,11 +96,12 @@ public class EnvironmentService {
         );
     }
 
+    @Transactional(readOnly = true)
     public ResponseDto<PageableDto<EnvironmentResponseDto>> listEnvironments(Pageable pageable) {
         String serviceName = "EnvironmentService";
         String operation = "LIST_ENVIRONMENTS";
 
-        logger.info("[{}] [{}] Iniciando listagem de configurações com paginação. Página: {}, Tamanho: {}", serviceName, operation, pageable.getPageNumber(), pageable.getPageSize());
+        logger.info("[{}] [{}] Iniciando listagem de environments com paginação. Página: {}, Tamanho: {}", serviceName, operation, pageable.getPageNumber(), pageable.getPageSize());
 
         Page<EnvironmentResponseDto> dtoPage = environmentRepository.findAll(pageable)
                 .map(this::toResponseDto);
@@ -149,6 +152,7 @@ public class EnvironmentService {
         }
     }
 
+    @Transactional
     public ResponseDto<EnvironmentResponseDto> updateEnvironment(UUID id, EnvironmentUpdateDto dto) {
         String serviceName = "EnvironmentService";
         String operation = "UPDATE_ENVIRONMENT";
@@ -186,6 +190,7 @@ public class EnvironmentService {
                 .build();
     }
 
+    @Transactional(readOnly = true)
     public ResponseDto<EnvironmentResponseDto> getEnvironmentById(UUID id) {
         String serviceName = "ConfigService";
         String operation = "GET_ENVIRONMENT_BY_ID";

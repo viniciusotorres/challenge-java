@@ -9,8 +9,10 @@ import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,69 +31,101 @@ public class NamespaceService {
         this.environmentRepository = environmentRepository;
     }
 
-    public ResponseDto<NamespaceEntity> createNamespace(NamespaceCreateDto dto) {
-        logger.info("Criando namespace - Nome: {}", dto.name());
+    @Transactional
+    public ResponseDto<NamespaceResponseDto> createNamespace(NamespaceCreateDto dto) {
+        String serviceName = "NamespaceService";
+        String operation = "CREATE_NAMESPACE";
+        String namespaceName = dto.name();
+
+        logger.info("[{}] [{}] Iniciando criação de namespace - Nome: {}", serviceName, operation, namespaceName);
+
+        logger.debug("[{}] [{}] Validando se o nome do namespace é válido - Nome: {}", serviceName, operation, namespaceName);
 
         if (namespaceRepository.existsByName(dto.name())) {
-            logger.warn("Namespace já existe - Nome: {}", dto.name());
-            throw new DataIntegrityViolationException("Namespace com nome já existente");
+            logger.warn("[{}] [{}] Namespace duplicado detectado. Nome: {}", serviceName, operation, namespaceName);
+            throw new DataIntegrityViolationException(
+                    String.format("Namespace com nome '%s' já existe", namespaceName)
+            );
         }
 
         NamespaceEntity namespace = buildNamespace(dto);
 
-        saveNamespace(namespace);
+        logger.debug("[{}] [{}] Persistindo namespace no banco.  ID: {}, Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
 
-        logger.info("Namespace criado com sucesso - ID: {}, Nome: {}", namespace.getId(), namespace.getName());
+        namespaceRepository.save(namespace);
 
-        return ResponseDto.<NamespaceEntity>builder()
-                .data(namespace)
-                .message("Namespace criado com sucesso")
+        NamespaceResponseDto responseDto = toResponseDto(namespace);
+
+        logger.info("[{}] [{}] Namespace criado com sucesso - ID: {}, Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
+
+        return ResponseDto.<NamespaceResponseDto>builder()
+                .data(responseDto)
+                .message(String.format("Namespace '%s' criado com sucesso", namespaceName))
                 .success(true)
                 .statusCode(201)
                 .build();
     }
 
     private NamespaceEntity buildNamespace(NamespaceCreateDto dto) {
+        logger.debug("Construindo entidade Namespace - Nome: {}", dto.name());
         return NamespaceEntity.builder()
                 .name(dto.name())
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
                 .build();
     }
 
-    private void saveNamespace(NamespaceEntity namespace) {
-        logger.info("Persistindo namespace no banco - Nome: {}", namespace.getName());
-        namespaceRepository.save(namespace);
-    }
-
+    @Transactional(readOnly = true)
     public ResponseDto<PageableDto<NamespaceResponseDto>> listNamespaces(Pageable pageable) {
-        logger.info("Listando namespace com paginação - Página: {}, Tamanho: {}",
-                pageable.getPageNumber(), pageable.getPageSize());
+        String serviceName = "NamespaceService";
+        String operation = "LIST_NAMESPACES";
 
-        var namespacesPage = namespaceRepository.findAll(pageable);
+        logger.info("[{}] [{}] Iniciando listagem de namespaces com paginação. Página: {}, Tamanho: {}", serviceName, operation, pageable.getPageNumber(), pageable.getPageSize());
 
-        List<NamespaceResponseDto> contentDto = namespacesPage.getContent()
-                .stream()
-                .map(this::toResponseDto)
-                .toList();
+        Page<NamespaceResponseDto> dtoPage = namespaceRepository.findAll(pageable)
+                .map(this::toResponseDto);
 
         PageableDto<NamespaceResponseDto> pageableDto = PageableDto.<NamespaceResponseDto>builder()
-                .content(contentDto)
-                .currentPage(namespacesPage.getNumber())
-                .pageSize(namespacesPage.getSize())
-                .totalElements(namespacesPage.getTotalElements())
-                .totalPages(namespacesPage.getTotalPages())
-                .first(namespacesPage.isFirst())
+                .content(dtoPage.getContent())
+                .currentPage(dtoPage.getNumber() + 1)
+                .pageSize(dtoPage.getSize())
+                .totalElements(dtoPage.getTotalElements())
+                .totalPages(dtoPage.getTotalPages())
+                .first(dtoPage.isFirst())
                 .build();
 
-        logger.info("Namespaces encontrados - Total: {}", pageableDto.totalElements());
+        logger.info("[{}] [{}] Listagem de namespaces concluída. Total de elementos: {}, Total de páginas: {}", serviceName, operation, pageableDto.totalElements(), pageableDto.totalPages());
+
+        String message = buildListMessage(pageableDto, "namespace");
 
         return ResponseDto.<PageableDto<NamespaceResponseDto>>builder()
                 .data(pageableDto)
-                .message("Namespaces listados com sucesso")
+                .message(message)
                 .success(true)
                 .statusCode(200)
                 .build();
+    }
+
+    private String buildListMessage(PageableDto<?> pageableDto, String entityName) {
+        long totalElements = pageableDto.totalElements();
+        int currentPage = pageableDto.currentPage();
+        int totalPages = pageableDto.totalPages();
+        int pageSize = pageableDto.pageSize();
+
+        if (totalElements == 0) {
+            return String.format(
+                    "Nenhum %s encontrado. Página %d de %d, Tamanho da página: %d",
+                    entityName, currentPage, totalPages, pageSize
+            );
+        } else if (totalElements == 1) {
+            return String.format(
+                    "1 %s encontrado. Página %d de %d, Tamanho da página: %d",
+                    entityName, currentPage, totalPages, pageSize
+            );
+        } else {
+            return String.format(
+                    "%d %ss encontrados. Página %d de %d, Tamanho da página: %d",
+                    totalElements, entityName, currentPage, totalPages, pageSize
+            );
+        }
     }
 
     private NamespaceResponseDto toResponseDto(NamespaceEntity namespace) {
@@ -103,123 +137,139 @@ public class NamespaceService {
         );
     }
 
+    @Transactional
     public ResponseDto<NamespaceResponseDto> updateNamespace(UUID id, NamespaceUpdateDto dto) {
-        logger.info("Atualizando namespace - ID: {}, Nome: {}", id, dto.name());
+        String serviceName = "NamespaceService";
+        String operation = "UPDATE_NAMESPACE";
 
-        return namespaceRepository.findById(id)
-                .map(namespace -> {
-                    if (!namespace.getName().equals(dto.name()) && namespaceRepository.existsByName(dto.name())) {
-                        logger.warn("Namespace já existe com o nome - Nome: {}", dto.name());
-                        throw new DataIntegrityViolationException("Namespace com nome já existente");
-                    }
+        logger.info("[{}] [{}] Iniciando atualização de namespace - ID: {}, Novo Nome: {}", serviceName, operation, id, dto.name());
 
-                    namespace.setName(dto.name());
-                    namespace.setUpdatedAt(LocalDateTime.now());
-                    saveNamespace(namespace);
-
-                    logger.info("Namespace atualizado com sucesso - ID: {}, Nome: {}", namespace.getId(), namespace.getName());
-
-                    NamespaceResponseDto responseDto = new NamespaceResponseDto(
-                            namespace.getId(),
-                            namespace.getName(),
-                            namespace.getCreatedAt(),
-                            namespace.getUpdatedAt()
-                    );
-
-                    return ResponseDto.<NamespaceResponseDto>builder()
-                            .data(responseDto)
-                            .message("Namespace atualizado com sucesso")
-                            .success(true)
-                            .statusCode(200)
-                            .build();
-                })
-                .orElseGet(() -> {
-                    logger.warn("Namespace não encontrado para atualização - ID: {}", id);
-                    throw new EntityNotFoundException("Namespace não encontrado");
+        NamespaceEntity namespace = namespaceRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("[{}] [{}] Namespace não encontrado para atualização - ID: {}", serviceName, operation, id);
+                    return new EntityNotFoundException("Namespace não encontrado");
                 });
+
+        logger.debug("[{}] [{}] Namespace encontrado para atualização - ID: {}, Nome Atual: {}", serviceName, operation, namespace.getId(), namespace.getName());
+
+        logger.debug("[{}] [{}] Validando se o novo nome do namespace é válido - ID: {}, Novo Nome: {}", serviceName, operation, id, dto.name());
+        if (!namespace.getName().equals(dto.name()) && namespaceRepository.existsByName(dto.name())) {
+            logger.warn("[{}] [{}] Namespace duplicado detectado durante atualização. ID: {}, Novo Nome: {}", serviceName, operation, id, dto.name());
+            throw new DataIntegrityViolationException(
+                    String.format("Namespace com nome '%s' já existe", dto.name())
+            );
+        }
+
+        namespace.setName(dto.name());
+
+        logger.debug("[{}] [{}] Persistindo atualização no banco. ID: {}, Novo Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
+
+        namespaceRepository.save(namespace);
+
+        NamespaceResponseDto responseDto = toResponseDto(namespace);
+
+        logger.info("[{}] [{}] Namespace atualizado com sucesso - ID: {}, Novo Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
+
+        return ResponseDto.<NamespaceResponseDto>builder()
+                .data(responseDto)
+                .message(String.format("Namespace '%s' atualizado com sucesso", namespace.getName()))
+                .success(true)
+                .statusCode(200)
+                .build();
     }
 
+    @Transactional(readOnly = true)
     public ResponseDto<NamespaceResponseDto> getNamespaceById(UUID id) {
-        logger.info("Buscando namespace por ID - ID: {}", id);
+        String serviceName = "NamespaceService";
+        String operation = "GET_NAMESPACE_BY_ID";
 
-        return namespaceRepository.findById(id)
-                .map(namespace -> {
-                    logger.info("Namespace encontrado - ID: {}, Nome: {}", namespace.getId(), namespace.getName());
+        logger.info("[{}] [{}] Iniciando busca de namespace por ID - ID: {}", serviceName, operation, id);
 
-                    NamespaceResponseDto dto = new NamespaceResponseDto(
-                            namespace.getId(),
-                            namespace.getName(),
-                            namespace.getCreatedAt(),
-                            namespace.getUpdatedAt()
-                    );
-
-                    return ResponseDto.<NamespaceResponseDto>builder()
-                            .data(dto)
-                            .message("Namespace encontrado")
-                            .success(true)
-                            .statusCode(200)
-                            .build();
-                })
-                .orElseGet(() -> {
-                    logger.warn("Namespace não encontrado - ID: {}", id);
-                    throw new EntityNotFoundException("Namespace não encontrado");
+        NamespaceEntity namespace = namespaceRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("[{}] [{}] Namespace não encontrado - ID: {}", serviceName, operation, id);
+                    return new EntityNotFoundException("Namespace não encontrado");
                 });
+
+        NamespaceResponseDto responseDto = toResponseDto(namespace);
+
+        logger.info("[{}] [{}] Namespace encontrado com sucesso - ID: {}, Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
+
+        return ResponseDto.<NamespaceResponseDto>builder()
+                .data(responseDto)
+                .message(String.format("Namespace '%s' encontrado com sucesso", namespace.getName()))
+                .success(true)
+                .statusCode(200)
+                .build();
     }
 
     public ResponseDto<Void> deleteNamespace(UUID id) {
-        logger.info("Deletando namespace - ID: {}", id);
+        String serviceName = "NamespaceService";
+        String operation = "DELETE_NAMESPACE";
 
-        return namespaceRepository.findById(id)
-                .map(namespace -> {
-                    namespaceRepository.delete(namespace);
-                    logger.info("Namespace deletado com sucesso - ID: {}", id);
-                    return ResponseDto.<Void>builder()
-                            .message("Namespace deletado com sucesso")
-                            .success(true)
-                            .statusCode(204)
-                            .build();
-                })
-                .orElseGet(() -> {
-                    logger.warn("Namespace não encontrado para deleção - ID: {}", id);
-                    throw new EntityNotFoundException("Namespace não encontrado");
+        logger.info("[{}] [{}] Iniciando exclusão de namespace - ID: {}", serviceName, operation, id);
+
+        NamespaceEntity namespace = namespaceRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("[{}] [{}] Namespace não encontrado para exclusão - ID: {}", serviceName, operation, id);
+                    return new EntityNotFoundException("Namespace não encontrado");
                 });
-    }
 
-    public ResponseDto<PageableDto<EnvironmentSimpleResponseDto>> getEnvironmentsByNamespaceId(UUID id, Pageable pageable) {
-        logger.info("Buscando ambientes por namespace - Namespace ID: {}, Página: {}, Tamanho: {}",
-                id, pageable.getPageNumber(), pageable.getPageSize());
+        logger.debug("[{}] [{}] Namespace encontrado para exclusão - ID: {}, Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
 
-        if (!namespaceRepository.existsById(id)) {
-            logger.warn("Namespace não encontrado - ID: {}", id);
-            throw new EntityNotFoundException("Namespace não encontrado");
+        boolean hasEnvironments = environmentRepository.existsByNamespaceId(id);
+        if (hasEnvironments) {
+            logger.warn("[{}] [{}] Não é possível excluir o namespace porque ele possui ambientes vinculados - ID: {}, Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
+            throw new DataIntegrityViolationException("Não é possível excluir o namespace porque ele possui ambientes vinculados");
         }
 
-        var environmentsPage = environmentRepository.findByNamespaceId(id, pageable);
+        namespaceRepository.delete(namespace);
 
-        List<EnvironmentSimpleResponseDto> contentDto = environmentsPage.getContent()
-                .stream()
+        logger.info("[{}] [{}] Namespace excluído com sucesso - ID: {}, Nome: {}", serviceName, operation, namespace.getId(), namespace.getName());
+
+        return ResponseDto.<Void>builder()
+                .data(null)
+                .message(String.format("Namespace '%s' excluído com sucesso", namespace.getName()))
+                .success(true)
+                .statusCode(200)
+                .build();
+    }
+
+    @Transactional(readOnly = true)
+    public ResponseDto<PageableDto<EnvironmentSimpleResponseDto>> getEnvironmentsByNamespaceId(UUID id, Pageable pageable) {
+        String serviceName = "NamespaceService";
+        String operation = "GET_ENVIRONMENTS_BY_NAMESPACE_ID";
+
+        logger.info("[{}] [{}] Iniciando busca de ambientes vinculados ao namespace - Namespace ID: {}, Página: {}, Tamanho: {}", serviceName, operation, id, pageable.getPageNumber(), pageable.getPageSize());
+
+        NamespaceEntity namespace = namespaceRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("[{}] [{}] Namespace não encontrado - ID: {}", serviceName, operation, id);
+                    return new EntityNotFoundException("Namespace não encontrado");
+                });
+
+        Page<EnvironmentSimpleResponseDto> dtoPage = environmentRepository.findByNamespaceId(id, pageable)
                 .map(env -> new EnvironmentSimpleResponseDto(
                         env.getId(),
                         env.getName(),
                         env.getCreatedAt(),
                         env.getUpdatedAt()
-                ))
-                .toList();
+                ));
 
         PageableDto<EnvironmentSimpleResponseDto> pageableDto = PageableDto.<EnvironmentSimpleResponseDto>builder()
-                .content(contentDto)
-                .currentPage(environmentsPage.getNumber())
-                .pageSize(environmentsPage.getSize())
-                .totalElements(environmentsPage.getTotalElements())
-                .totalPages(environmentsPage.getTotalPages())
-                .first(environmentsPage.isFirst())
+                .content(dtoPage.getContent())
+                .currentPage(dtoPage.getNumber() + 1)
+                .pageSize(dtoPage.getSize())
+                .totalElements(dtoPage.getTotalElements())
+                .totalPages(dtoPage.getTotalPages())
+                .first(dtoPage.isFirst())
+                .last(dtoPage.isLast())
                 .build();
 
-        String message = contentDto.isEmpty()
-                ? "Nenhum ambiente encontrado vinculado a esse namespace"
-                : "Ambientes listados com sucesso";
+        logger.info("[{}] [{}] Busca de ambientes concluída. Total de elementos: {}, Total de páginas: {}", serviceName, operation, pageableDto.totalElements(), pageableDto.totalPages());
 
-        logger.info("{} - Namespace ID: {}, Total: {}", message, id, pageableDto.totalElements());
+
+        String message = buildListMessage(pageableDto, "ambiente");
 
         return ResponseDto.<PageableDto<EnvironmentSimpleResponseDto>>builder()
                 .data(pageableDto)
@@ -228,8 +278,6 @@ public class NamespaceService {
                 .statusCode(200)
                 .build();
     }
-
-
 
 
 }
