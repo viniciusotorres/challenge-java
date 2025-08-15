@@ -79,7 +79,7 @@ public class NamespaceService {
                 .content(contentDto)
                 .currentPage(namespacesPage.getNumber())
                 .pageSize(namespacesPage.getSize())
-                .totalElements((int) namespacesPage.getTotalElements())
+                .totalElements(namespacesPage.getTotalElements())
                 .totalPages(namespacesPage.getTotalPages())
                 .first(namespacesPage.isFirst())
                 .build();
@@ -210,7 +210,7 @@ public class NamespaceService {
                 .content(contentDto)
                 .currentPage(environmentsPage.getNumber())
                 .pageSize(environmentsPage.getSize())
-                .totalElements((int) environmentsPage.getTotalElements())
+                .totalElements(environmentsPage.getTotalElements())
                 .totalPages(environmentsPage.getTotalPages())
                 .first(environmentsPage.isFirst())
                 .build();
