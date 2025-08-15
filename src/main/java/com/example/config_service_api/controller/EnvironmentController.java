@@ -26,7 +26,6 @@ public class EnvironmentController {
     }
 
     @PostMapping("/create")
-    @Transactional
     public ResponseEntity<ResponseDto> createEnvironment(@Valid @RequestBody EnvironmentCreateDto environmentCreateDto) {
         logger.info("Requisição recebida [POST /environment/create] - Corpo da requisição: {}", environmentCreateDto);
         ResponseDto response = environmentService.createEnvironment(environmentCreateDto);
@@ -42,7 +41,6 @@ public class EnvironmentController {
 
 
     @PutMapping("/update/{id}")
-    @Transactional
     public ResponseEntity<ResponseDto> updateEnvironment(@PathVariable UUID id, @Valid @RequestBody EnvironmentUpdateDto environmentUpdateDto) {
         logger.info("Requisição recebida [PUT /environment/update/{}] - Corpo da requisição: {}", id, environmentUpdateDto);
         ResponseDto response = environmentService.updateEnvironment(id, environmentUpdateDto);

@@ -33,6 +33,7 @@ public class DataConfigService {
         this.environmentRepository = environmentRepository;
     }
 
+    @Transactional
     public ResponseDto<DataConfigResponseDto> createDataConfig(DataConfigCreateDto dto) {
         String serviceName = "ConfigService";
         String operation = "CREATE_DATA_CONFIG";
@@ -66,7 +67,7 @@ public class DataConfigService {
 
         return ResponseDto.<DataConfigResponseDto>builder()
                 .data(responseDto)
-                .message(String.format("Configuração '%s' criada com sucesso no ambiente %s", key, environmentId))
+                .message(String.format("Configuração '%s' criada com sucesso no ambiente com ID: %s", key, environmentId))
                 .success(true)
                 .statusCode(201)
                 .build();
@@ -81,7 +82,6 @@ public class DataConfigService {
                 .build();
     }
 
-    @Transactional
     public DataConfigResponseDto toResponseDto(DataEntity dataEntity) {
         return new DataConfigResponseDto(
                 dataEntity.getId(),
@@ -181,6 +181,7 @@ public class DataConfigService {
         }
     }
 
+    @Transactional
     public ResponseDto<DataConfigResponseDto> updateDataConfig(UUID id, DataConfigUpdateDto dto) {
         String serviceName = "ConfigService";
         String operation = "UPDATE_DATA_CONFIG";
@@ -218,6 +219,7 @@ public class DataConfigService {
                 .build();
     }
 
+    @Transactional(readOnly = true)
     public ResponseDto<DataConfigResponseDto> getDataConfigById(UUID id) {
         String serviceName = "ConfigService";
         String operation = "GET_DATA_CONFIG_BY_ID";
