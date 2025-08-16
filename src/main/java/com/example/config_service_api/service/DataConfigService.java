@@ -9,6 +9,10 @@ import com.example.config_service_api.repository.DataRepository;
 import com.example.config_service_api.repository.EnvironmentRepository;
 import com.example.config_service_api.repository.HistoryConfigRepository;
 import jakarta.persistence.EntityNotFoundException;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.CachePut;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +42,7 @@ public class DataConfigService {
         this.historyConfigRepository = historyConfigRepository;
     }
 
+    @CachePut(value = "CONFIG_CACHE", key = "#result.id()")
     @Transactional
     public ResponseDto<DataConfigResponseDto> createDataConfig(DataConfigCreateDto dto) {
         String serviceName = "ConfigService";
@@ -120,6 +125,7 @@ public class DataConfigService {
         );
     }
 
+    @Cacheable(value = "CONFIG_CACHE", key = "#pageable.pageNumber + '-' + #pageable.pageSize")
     public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigs(Pageable pageable) {
         String serviceName = "ConfigService";
         String operation = "LIST_DATA_CONFIGS";
@@ -128,6 +134,7 @@ public class DataConfigService {
 
         Page<DataConfigResponseDto> dtoPage = dataRepository.findAll(pageable)
                 .map(this::toResponseDto);
+
 
         PageableDto<DataConfigResponseDto> pageableDto = PageableDto.<DataConfigResponseDto>builder()
                 .content(dtoPage.getContent())
@@ -143,6 +150,7 @@ public class DataConfigService {
 
         String message = buildListMessage(pageableDto, "configuração", "configurações");
 
+
         return ResponseDto.<PageableDto<DataConfigResponseDto>>builder()
                 .data(pageableDto)
                 .message(message)
@@ -151,6 +159,7 @@ public class DataConfigService {
                 .build();
     }
 
+    @Cacheable(value = "CONFIG_CACHE", key = "#environmentId + '-' + #pageable.pageNumber + '-' + #pageable.pageSize")
     @Transactional(readOnly = true)
     public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigsByEnvironment(UUID environmentId, Pageable pageable) {
         String serviceName = "ConfigService";
@@ -208,6 +217,7 @@ public class DataConfigService {
         }
     }
 
+    @CachePut(value = "CONFIG_CACHE", key = "#result.id()")
     @Transactional
     public ResponseDto<DataConfigResponseDto> updateDataConfig(UUID id, DataConfigUpdateDto dto) {
         String serviceName = "ConfigService";
@@ -257,6 +267,7 @@ public class DataConfigService {
                 .build();
     }
 
+    @Cacheable(value = "CONFIG+CACHE", key = "#dataConfigId")
     @Transactional(readOnly = true)
     public ResponseDto<DataConfigResponseDto> getDataConfigById(UUID id) {
         String serviceName = "ConfigService";
@@ -282,6 +293,7 @@ public class DataConfigService {
                 .build();
     }
 
+    @CacheEvict(value ="CONFIG_CACHE", key = "#dataConfigId")
     public ResponseDto<Void> deleteDataConfig(UUID id) {
         String serviceName = "ConfigService";
         String operation = "DELETE_DATA_CONFIG";
@@ -341,6 +353,8 @@ public class DataConfigService {
         }
     }
 
+    @Cacheable(value = "CONFIG_CACHE", key = "#environmentId + '-' + #pageable.pageNumber + '-' + #pageable.pageSize")
+    @Transactional(readOnly = true)
     public ResponseDto<PageableDto<HistoryConfigResponseDto>> getHistoryByEnvironment(UUID environmentId, Pageable pageable) {
         String serviceName = "ConfigService";
         String operation = "GET_HISTORY_BY_ENVIRONMENT";

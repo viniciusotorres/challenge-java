@@ -39,6 +39,7 @@ public class DataConfigController {
         return respondWithLogging(response, response.statusCode(), response.message());
     }
 
+
     @GetMapping("/list-by-environment/{environmentId}")
     public ResponseEntity<ResponseDto<PageableDto<DataConfigResponseDto>>> listDataConfigsByEnvironment(
             @PathVariable UUID environmentId, Pageable pageable) {
@@ -78,7 +79,6 @@ public class DataConfigController {
 
         return respondWithLogging(response, response.statusCode(), response.message());
     }
-
 
     private <T> ResponseEntity<T> respondWithLogging(T body, int statusCode, String message) {
         logger.info("Resposta enviada [status: {}] - Mensagem: {}", statusCode, message);
