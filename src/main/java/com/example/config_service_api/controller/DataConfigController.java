@@ -69,6 +69,17 @@ public class DataConfigController {
         return respondWithLogging(response, response.statusCode(), response.message());
     }
 
+    @GetMapping("/history-by-environment/{environmentId}")
+    public ResponseEntity<ResponseDto<PageableDto<HistoryConfigResponseDto>>> getHistoryByEnvironment(
+            @PathVariable UUID environmentId, Pageable pageable) {
+        logger.info("Requisição recebida [GET /data-config/history-by-environment/{}]", environmentId);
+
+        ResponseDto<PageableDto<HistoryConfigResponseDto>> response = dataConfigService.getHistoryByEnvironment(environmentId, pageable);
+
+        return respondWithLogging(response, response.statusCode(), response.message());
+    }
+
+
     private <T> ResponseEntity<T> respondWithLogging(T body, int statusCode, String message) {
         logger.info("Resposta enviada [status: {}] - Mensagem: {}", statusCode, message);
         return ResponseEntity.status(statusCode).body(body);
