@@ -1,5 +1,6 @@
 package com.example.config_service_api.service;
 
+import com.example.config_service_api.config.ConfigChangeEvent;
 import com.example.config_service_api.dto.*;
 import com.example.config_service_api.entity.DataEntity;
 import com.example.config_service_api.entity.EnvironmentEntity;
@@ -35,96 +36,50 @@ public class DataConfigService {
     private final DataRepository dataRepository;
     private final EnvironmentRepository environmentRepository;
     private final HistoryConfigRepository historyConfigRepository;
+    private final ConfigEventProducer configEventProducer;
 
-    public DataConfigService(DataRepository dataRepository, EnvironmentRepository environmentRepository, HistoryConfigRepository historyConfigRepository) {
+    public DataConfigService(DataRepository dataRepository, EnvironmentRepository environmentRepository, HistoryConfigRepository historyConfigRepository, ConfigEventProducer configEventProducer) {
         this.dataRepository = dataRepository;
         this.environmentRepository = environmentRepository;
         this.historyConfigRepository = historyConfigRepository;
+        this.configEventProducer = configEventProducer;
     }
 
-    @CachePut(value = "CONFIG_CACHE", key = "#result.id()")
+    /**
+     *  Cria uma nova configuração de dados.
+     */
     @Transactional
+    @CachePut(value = "CONFIG_CACHE", key = "'config_' + #result.data.environmentId + '_' + #dto.key")
     public ResponseDto<DataConfigResponseDto> createDataConfig(DataConfigCreateDto dto) {
         String serviceName = "ConfigService";
         String operation = "CREATE_DATA_CONFIG";
-        UUID environmentId = dto.environmentId();
-        String key = dto.key();
 
-        logger.info("[{}] [{}] Iniciando criação de configuração. Chave: {}, Ambiente: {}", serviceName, operation, key, environmentId);
-
-        logger.debug("[{}] [{}] Buscando ambiente no repositório. Ambiente ID: {}", serviceName, operation, environmentId);
-        EnvironmentEntity environment = environmentRepository.findById(dto.environmentId())
-                .orElseThrow(() -> new EntityNotFoundException("Ambiente não encontrado"));
-
-        logger.info("[{}] [{}] Ambiente encontrado. ID: {}, Nome: {}", serviceName, operation, environment.getId(), environment.getName());
-
-        if (dataRepository.existsByKeyAndEnvironmentId(key, dto.environmentId())) {
-            logger.debug("[{}] [{}] Configuração duplicada detectada. Chave: {}, Ambiente ID: {}", serviceName, operation, key, environmentId);
-            throw new DataIntegrityViolationException(
-                    String.format("Configuração com chave '%s' já existe no ambiente do ID: %s", key, environmentId)
-            );
-        }
+        EnvironmentEntity environment = findEnvironment(dto.environmentId(), serviceName, operation);
+        validateDuplicateConfig(dto.key(), dto.environmentId(), serviceName, operation);
 
         DataEntity dataEntity = buildDataEntity(dto, environment);
-
-        logger.debug("[{}] [{}] Persistindo configuração no banco. Chave: {}, Ambiente: {}", serviceName, operation, key, environmentId);
-
         dataRepository.save(dataEntity);
 
-        logger.info("[{}] [{}] Persistindo histórico da configuração. ID: {}, Chave: {}, Ambiente: {}", serviceName, operation, dataEntity.getId(), key, environmentId);
+        sendConfigEventToKafka(dataEntity, "CREATE", serviceName, operation);
 
         saveHistoryConfig(dataEntity, OperationType.CREATE, null, dataEntity.getValue(), null, dataEntity.getKey());
 
-        logger.debug("[{}] [{}] Histórico da configuração persistido com sucesso. ID: {}, Chave: {}, Ambiente: {}", serviceName, operation, dataEntity.getId(), key, environmentId);
-
         DataConfigResponseDto responseDto = toResponseDto(dataEntity);
 
-        logger.info("[{}] [{}] Configuração criada com sucesso. ID: {}, Chave: {}, Ambiente: {}", serviceName, operation, dataEntity.getId(), key, environmentId);
+        logger.info("[{}] [{}] Configuração criada com sucesso. ID: {}, Chave: {}, Ambiente: {}",
+                serviceName, operation, dataEntity.getId(), dto.key(), dto.environmentId());
 
         return ResponseDto.<DataConfigResponseDto>builder()
                 .data(responseDto)
-                .message(String.format("Configuração '%s' criada com sucesso no ambiente com ID: %s", key, environmentId))
+                .message(String.format("Configuração '%s' criada com sucesso no ambiente com ID: %s", dto.key(), dto.environmentId()))
                 .success(true)
                 .statusCode(201)
                 .build();
     }
 
-    private void saveHistoryConfig(DataEntity entity, OperationType type, String oldValue, String newValue, String oldKey, String newKey) {
-        HistoryConfigEntity historyConfigEntity = HistoryConfigEntity.builder()
-                .configurationId(type == OperationType.DELETE ? null : entity.getId())
-                .environmentId(entity.getEnvironment().getId())
-                .oldKey(oldKey)
-                .newKey(newKey)
-                .oldValue(oldValue)
-                .newValue(newValue)
-                .changedBy("system")
-                .changedAt(LocalDateTime.now())
-                .operationType(type)
-                .build();
-
-        historyConfigRepository.save(historyConfigEntity);
-    }
-
-    private DataEntity buildDataEntity(DataConfigCreateDto dto, EnvironmentEntity environment) {
-        logger.debug("Construindo DataEntity a partir do DTO. Chave: {}, Valor: {}", dto.key(), dto.value());
-        return DataEntity.builder()
-                .key(dto.key())
-                .value(dto.value())
-                .environment(environment)
-                .build();
-    }
-
-    public DataConfigResponseDto toResponseDto(DataEntity dataEntity) {
-        return new DataConfigResponseDto(
-                dataEntity.getId(),
-                dataEntity.getKey(),
-                dataEntity.getValue(),
-                dataEntity.getCreatedAt(),
-                dataEntity.getUpdatedAt(),
-                dataEntity.getEnvironment().getId()
-        );
-    }
-
+    /**
+     * Lista todas as configuraçõescom paginação.
+     */
     @Cacheable(value = "CONFIG_CACHE", key = "#pageable.pageNumber + '-' + #pageable.pageSize")
     public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigs(Pageable pageable) {
         String serviceName = "ConfigService";
@@ -159,6 +114,9 @@ public class DataConfigService {
                 .build();
     }
 
+    /**
+     * Lista as configurações  por ambiente com paginação.
+     */
     @Cacheable(value = "CONFIG_CACHE", key = "#environmentId + '-' + #pageable.pageNumber + '-' + #pageable.pageSize")
     @Transactional(readOnly = true)
     public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigsByEnvironment(UUID environmentId, Pageable pageable) {
@@ -199,25 +157,10 @@ public class DataConfigService {
                 .build();
     }
 
-    private String buildListMessage(PageableDto<?> pageableDto, String singular, String plural) {
-        long totalElements = pageableDto.totalElements();
-        int currentPage = pageableDto.currentPage();
-        int totalPages = pageableDto.totalPages();
-        int pageSize = pageableDto.pageSize();
-
-        if (totalElements == 0) {
-            return String.format("Nenhum %s encontrada. Página %d de %d, Tamanho da página: %d",
-                    singular, currentPage, totalPages, pageSize);
-        } else if (totalElements == 1) {
-            return String.format("1 %s encontrada. Página %d de %d, Tamanho da página: %d",
-                    singular, currentPage, totalPages, pageSize);
-        } else {
-            return String.format("%d %s encontradas. Página %d de %d, Tamanho da página: %d",
-                    totalElements, plural, currentPage, totalPages, pageSize);
-        }
-    }
-
-    @CachePut(value = "CONFIG_CACHE", key = "#result.id()")
+    /**
+     * Atualiza uma configuração  existente.
+     */
+    @CachePut(value = "CONFIG_CACHE", key = "'config_' + #result.data.environmentId + '_' + #dto.key")
     @Transactional
     public ResponseDto<DataConfigResponseDto> updateDataConfig(UUID id, DataConfigUpdateDto dto) {
         String serviceName = "ConfigService";
@@ -225,11 +168,7 @@ public class DataConfigService {
 
         logger.info("[{}] [{}] Iniciando atualização de configuração. ID: {}, Chave: {}", serviceName, operation, id, dto.key());
 
-        DataEntity dataEntity = dataRepository.findById(id)
-                .orElseThrow(() -> {
-                    logger.error("[{}] [{}] Configuração não encontrada. ID: {}", serviceName, operation, id);
-                    return new EntityNotFoundException("Configuração não encontrada");
-                });
+        DataEntity dataEntity = findDataEntityById(id, serviceName, operation);
 
         String oldKey = dataEntity.getKey();
         String oldValue = dataEntity.getValue();
@@ -246,18 +185,17 @@ public class DataConfigService {
         }
 
         applyUpdates(dataEntity, dto, serviceName, operation);
-
         dataRepository.save(dataEntity);
 
         logger.info("[{}] [{}] Persistindo histórico da configuração atualizada. ID: {}, Chave: {}", serviceName, operation, dataEntity.getId(), dataEntity.getKey());
-
         saveHistoryConfig(dataEntity, OperationType.UPDATE, oldValue, newValue, oldKey, newKey);
-
         logger.debug("[{}] [{}] Histórico da configuração atualizado com sucesso. ID: {}, Chave: {}", serviceName, operation, dataEntity.getId(), dataEntity.getKey());
 
         DataConfigResponseDto responseDto = toResponseDto(dataEntity);
 
         logger.info("[{}] [{}] Configuração atualizada com sucesso. ID: {}, Chave: {}", serviceName, operation, id, dataEntity.getKey());
+
+        sendConfigEventToKafka(dataEntity, "UPDATE", serviceName, operation);
 
         return ResponseDto.<DataConfigResponseDto>builder()
                 .data(responseDto)
@@ -267,7 +205,10 @@ public class DataConfigService {
                 .build();
     }
 
-    @Cacheable(value = "CONFIG+CACHE", key = "#dataConfigId")
+    /**
+     * Busca uma configuração por ID.
+     */
+    @Cacheable(value = "CONFIG+CACHE", key = "#id")
     @Transactional(readOnly = true)
     public ResponseDto<DataConfigResponseDto> getDataConfigById(UUID id) {
         String serviceName = "ConfigService";
@@ -293,7 +234,10 @@ public class DataConfigService {
                 .build();
     }
 
-    @CacheEvict(value ="CONFIG_CACHE", key = "#dataConfigId")
+    /**
+     * Exclui uma configuração por ID.
+     */
+    @CacheEvict(value = "CONFIG+CACHE", key = "#id")
     public ResponseDto<Void> deleteDataConfig(UUID id) {
         String serviceName = "ConfigService";
         String operation = "DELETE_DATA_CONFIG";
@@ -314,6 +258,8 @@ public class DataConfigService {
 
         dataRepository.delete(dataEntity);
 
+        sendConfigEventToKafka(dataEntity, "DELETE", serviceName, operation);
+
         logger.info("[{}] [{}] Configuração excluída com sucesso. ID: {}", serviceName, operation, id);
 
         return ResponseDto.<Void>builder()
@@ -323,36 +269,10 @@ public class DataConfigService {
                 .build();
     }
 
-    private boolean hasUpdate(DataConfigUpdateDto dto) {
-        return (dto.key() != null && !dto.key().isBlank()) || (dto.value() != null && !dto.value().isBlank());
-    }
 
-    private void applyUpdates(DataEntity entity, DataConfigUpdateDto dto, String serviceName, String operation) {
-        if (dto.key() != null && !dto.key().isBlank() && !dto.key().equals(entity.getKey())) {
-            validateKeyUniqueness(entity, dto.key(), serviceName, operation);
-            logger.debug("[{}] [{}] Atualizando chave da configuração. ID: {}, De: {}, Para: {}",
-                    serviceName, operation, entity.getId(), entity.getKey(), dto.key());
-            entity.setKey(dto.key().trim());
-        }
-
-        if (dto.value() != null && !dto.value().isBlank() && !dto.value().equals(entity.getValue())) {
-            logger.debug("[{}] [{}] Atualizando valor da configuração. ID: {}, De: {}, Para: {}",
-                    serviceName, operation, entity.getId(), entity.getValue(), dto.value());
-            entity.setValue(dto.value().trim());
-        }
-
-    }
-
-    private void validateKeyUniqueness(DataEntity entity, String newKey, String serviceName, String operation) {
-        if (!entity.getKey().equals(newKey) &&
-                dataRepository.existsByKeyAndEnvironmentId(newKey, entity.getEnvironment().getId())) {
-            logger.debug("[{}] [{}] Configuração duplicada detectada. Chave: {}, Ambiente ID: {}", serviceName, operation, newKey, entity.getEnvironment().getId());
-            throw new DataIntegrityViolationException(
-                    String.format("Configuração com chave '%s' já existe no ambiente %s", newKey, entity.getEnvironment().getId())
-            );
-        }
-    }
-
+    /**
+     * Busca o histórico de configurações por ambiente com paginação.
+     */
     @Cacheable(value = "CONFIG_CACHE", key = "#environmentId + '-' + #pageable.pageNumber + '-' + #pageable.pageSize")
     @Transactional(readOnly = true)
     public ResponseDto<PageableDto<HistoryConfigResponseDto>> getHistoryByEnvironment(UUID environmentId, Pageable pageable) {
@@ -361,7 +281,7 @@ public class DataConfigService {
 
         logger.info("[{}] [{}] Iniciando busca de histórico por ambiente. Ambiente ID: {}", serviceName, operation, environmentId);
 
-        Page<HistoryConfigEntity> historyEntities = fetchHistoryEntities(environmentId, serviceName, operation);
+        Page<HistoryConfigEntity> historyEntities = fetchHistoryEntities(environmentId, pageable, serviceName, operation);
 
         List<HistoryConfigResponseDto> historyDtos = mapToDto(historyEntities);
 
@@ -377,8 +297,9 @@ public class DataConfigService {
                 .build();
     }
 
-    private Page<HistoryConfigEntity> fetchHistoryEntities(UUID environmentId, String serviceName, String operation) {
-        Page<HistoryConfigEntity> historyEntities = historyConfigRepository.findByEnvironmentId(environmentId, Pageable.unpaged());
+    // => Auxilia buscar as entidades de histórico
+    private Page<HistoryConfigEntity> fetchHistoryEntities(UUID environmentId, Pageable pageable, String serviceName, String operation) {
+        Page<HistoryConfigEntity> historyEntities = historyConfigRepository.findByEnvironmentId(environmentId, pageable);
 
         if (historyEntities.isEmpty()) {
             logger.warn("[{}] [{}] Nenhum histórico encontrado para o ambiente ID: {}", serviceName, operation, environmentId);
@@ -388,6 +309,8 @@ public class DataConfigService {
         return historyEntities;
     }
 
+
+    // => Auxilia mapear HistoryConfigEntity para HistoryConfigResponseDto
     private List<HistoryConfigResponseDto> mapToDto(Page<HistoryConfigEntity> historyEntities) {
         return historyEntities.stream()
                 .map(entity -> HistoryConfigResponseDto.fromEntity(
@@ -404,6 +327,7 @@ public class DataConfigService {
                 .toList();
     }
 
+    // => Auxilia construir o PageableDto a partir do Page de HistoryConfigEntity
     private PageableDto<HistoryConfigResponseDto> buildPageableDto(Page<HistoryConfigEntity> historyEntities, List<HistoryConfigResponseDto> content) {
         return PageableDto.<HistoryConfigResponseDto>builder()
                 .content(content)
@@ -416,5 +340,147 @@ public class DataConfigService {
                 .build();
     }
 
+    // => Auxilia verificar se há atualizações a serem aplicadas
+    private boolean hasUpdate(DataConfigUpdateDto dto) {
+        return (dto.key() != null && !dto.key().isBlank()) || (dto.value() != null && !dto.value().isBlank());
+    }
+
+    // => Auxilia aplicar as atualizações no DataEntity
+    private void applyUpdates(DataEntity entity, DataConfigUpdateDto dto, String serviceName, String operation) {
+        if (dto.key() != null && !dto.key().isBlank() && !dto.key().equals(entity.getKey())) {
+            validateKeyUniqueness(entity, dto.key(), serviceName, operation);
+            logger.debug("[{}] [{}] Atualizando chave da configuração. ID: {}, De: {}, Para: {}",
+                    serviceName, operation, entity.getId(), entity.getKey(), dto.key());
+            entity.setKey(dto.key().trim());
+        }
+
+        if (dto.value() != null && !dto.value().isBlank() && !dto.value().equals(entity.getValue())) {
+            logger.debug("[{}] [{}] Atualizando valor da configuração. ID: {}, De: {}, Para: {}",
+                    serviceName, operation, entity.getId(), entity.getValue(), dto.value());
+            entity.setValue(dto.value().trim());
+        }
+
+    }
+
+    // => Auxilia validar a unicidade da chave
+    private void validateKeyUniqueness(DataEntity entity, String newKey, String serviceName, String operation) {
+        if (!entity.getKey().equals(newKey) &&
+                dataRepository.existsByKeyAndEnvironmentId(newKey, entity.getEnvironment().getId())) {
+            logger.debug("[{}] [{}] Configuração duplicada detectada. Chave: {}, Ambiente ID: {}", serviceName, operation, newKey, entity.getEnvironment().getId());
+            throw new DataIntegrityViolationException(
+                    String.format("Configuração com chave '%s' já existe no ambiente %s", newKey, entity.getEnvironment().getId())
+            );
+        }
+    }
+
+    // => Auxilia construir a mensagem de listagem
+    private String buildListMessage(PageableDto<?> pageableDto, String singular, String plural) {
+        long totalElements = pageableDto.totalElements();
+        int currentPage = pageableDto.currentPage();
+        int totalPages = pageableDto.totalPages();
+        int pageSize = pageableDto.pageSize();
+
+        if (totalElements == 0) {
+            return String.format("Nenhum %s encontrada. Página %d de %d, Tamanho da página: %d",
+                    singular, currentPage, totalPages, pageSize);
+        } else if (totalElements == 1) {
+            return String.format("1 %s encontrada. Página %d de %d, Tamanho da página: %d",
+                    singular, currentPage, totalPages, pageSize);
+        } else {
+            return String.format("%d %s encontradas. Página %d de %d, Tamanho da página: %d",
+                    totalElements, plural, currentPage, totalPages, pageSize);
+        }
+    }
+
+    // => Auxilia encontrar o ambiente
+    private EnvironmentEntity findEnvironment(UUID environmentId, String serviceName, String operation) {
+        logger.debug("[{}] [{}] Buscando ambiente no repositório. Ambiente ID: {}", serviceName, operation, environmentId);
+        return environmentRepository.findById(environmentId)
+                .orElseThrow(() -> new EntityNotFoundException("Ambiente não encontrado"));
+    }
+
+    // => Auxilia encontrar uma Config por ID
+    private DataEntity findDataEntityById(UUID id, String serviceName, String operation) {
+        logger.debug("[{}] [{}] Buscando Config no repositório. ID: {}", serviceName, operation, id);
+        return  dataRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.error("[{}] [{}] Configuração não encontrada. ID: {}", serviceName, operation, id);
+                    return new EntityNotFoundException("Configuração não encontrada");
+                });
+    }
+
+    // => Auxilia validar a duplicidade da configuração
+    private void validateDuplicateConfig(String key, UUID environmentId, String serviceName, String operation) {
+        if (dataRepository.existsByKeyAndEnvironmentId(key, environmentId)) {
+            logger.debug("[{}] [{}] Configuração duplicada detectada. Chave: {}, Ambiente ID: {}", serviceName, operation, key, environmentId);
+            throw new DataIntegrityViolationException(
+                    String.format("Configuração com chave '%s' já existe no ambiente do ID: %s", key, environmentId)
+            );
+        }
+    }
+
+    // => Auxilia salvar o histórico da configuração
+    private void saveHistoryConfig(DataEntity entity, OperationType type, String oldValue, String newValue, String oldKey, String newKey) {
+        HistoryConfigEntity historyConfigEntity = HistoryConfigEntity.builder()
+                .configurationId(type == OperationType.DELETE ? null : entity.getId())
+                .environmentId(entity.getEnvironment().getId())
+                .oldKey(oldKey)
+                .newKey(newKey)
+                .oldValue(oldValue)
+                .newValue(newValue)
+                .changedBy("system")
+                .changedAt(LocalDateTime.now())
+                .operationType(type)
+                .build();
+
+        historyConfigRepository.save(historyConfigEntity);
+    }
+
+    // => Auxilia enviar o evento de configuração para o Kafka
+    private void sendConfigEventToKafka(DataEntity dataEntity, String action, String serviceName, String operation) {
+        logger.info("[{}] [{}] Enviando evento '{}' para Kafka. Config ID: {}, Chave: {}",
+                serviceName, operation, action, dataEntity.getId(), dataEntity.getKey());
+
+        ConfigChangeEvent event = new ConfigChangeEvent(
+                action,
+                dataEntity.getId(),
+                dataEntity.getEnvironment().getNamespace().getName(),
+                dataEntity.getEnvironment().getName(),
+                dataEntity.getKey(),
+                dataEntity.getValue(),
+                LocalDateTime.now()
+        );
+
+        try {
+            configEventProducer.sendConfigChange(event);
+            logger.info("[{}] [{}] Evento '{}' enviado para Kafka com sucesso. Config ID: {}, Chave: {}",
+                    serviceName, operation, action, dataEntity.getId(), dataEntity.getKey());
+        } catch (Exception ex) {
+            logger.error("[{}] [{}] Falha ao enviar evento '{}' para Kafka. Config ID: {}, Chave: {}. Erro: {}",
+                    serviceName, operation, action, dataEntity.getId(), dataEntity.getKey(), ex.getMessage(), ex);
+        }
+    }
+
+    // => Auxilia construir o DataEntity a partir do DTO
+    private DataEntity buildDataEntity(DataConfigCreateDto dto, EnvironmentEntity environment) {
+        logger.debug("Construindo DataEntity a partir do DTO. Chave: {}, Valor: {}", dto.key(), dto.value());
+        return DataEntity.builder()
+                .key(dto.key())
+                .value(dto.value())
+                .environment(environment)
+                .build();
+    }
+
+    // => Auxilia converter DataEntity para DataConfigResponseDto
+    public DataConfigResponseDto toResponseDto(DataEntity dataEntity) {
+        return new DataConfigResponseDto(
+                dataEntity.getId(),
+                dataEntity.getKey(),
+                dataEntity.getValue(),
+                dataEntity.getCreatedAt(),
+                dataEntity.getUpdatedAt(),
+                dataEntity.getEnvironment().getId()
+        );
+    }
 
 }
