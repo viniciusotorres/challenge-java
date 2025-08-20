@@ -11,6 +11,7 @@ import com.example.config_service_api.repository.EnvironmentRepository;
 import com.example.config_service_api.repository.HistoryConfigRepository;
 import com.example.config_service_api.utils.CustomCacheManager;
 import jakarta.persistence.EntityNotFoundException;
+import org.apache.tomcat.util.net.openssl.ciphers.Authentication;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
@@ -23,6 +24,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -464,23 +466,48 @@ public class DataConfigService {
         logger.info("[{}] [{}] Enviando evento '{}' para Kafka. Config ID: {}, Chave: {}",
                 serviceName, operation, action, dataEntity.getId(), dataEntity.getKey());
 
+        String value = "DELETE".equals(action) ? null : dataEntity.getValue();
+
         ConfigChangeEvent event = new ConfigChangeEvent(
                 action,
                 dataEntity.getId(),
                 dataEntity.getEnvironment().getNamespace().getName(),
                 dataEntity.getEnvironment().getName(),
                 dataEntity.getKey(),
-                dataEntity.getValue(),
-                LocalDateTime.now()
+                value,
+                Instant.now(),
+                getCurrentUsername()
         );
 
         try {
-            configEventProducer.sendConfigChange(event);
-            logger.info("[{}] [{}] Evento '{}' enviado para Kafka com sucesso. Config ID: {}, Chave: {}",
+            configEventProducer.sendConfigChange(event, (result, ex) -> {
+                if (ex == null) {
+                    logger.info("[{}] [{}] Evento '{}' enviado com sucesso. Config ID: {}, Chave: {}, Partition: {}, Offset: {}",
+                            serviceName, operation, action, dataEntity.getId(), dataEntity.getKey(),
+                            result.getRecordMetadata().partition(), result.getRecordMetadata().offset());
+
+                } else {
+                    logger.warn("[{}] [{}] Falha ao enviar evento '{}'. Config ID: {}, Chave: {}. Erro: {}",
+                            serviceName, operation, action, dataEntity.getId(), dataEntity.getKey(), ex.getMessage());
+
+                }
+            });
+
+            logger.debug("[{}] [{}] Evento '{}' submetido para envio. Config ID: {}, Chave: {}",
                     serviceName, operation, action, dataEntity.getId(), dataEntity.getKey());
+
         } catch (Exception ex) {
-            logger.error("[{}] [{}] Falha ao enviar evento '{}' para Kafka. Config ID: {}, Chave: {}. Erro: {}",
+            logger.error("[{}] [{}] Falha crítica ao enviar evento '{}'. Config ID: {}, Chave: {}. Erro: {}",
                     serviceName, operation, action, dataEntity.getId(), dataEntity.getKey(), ex.getMessage(), ex);
+        }
+    }
+
+    private String getCurrentUsername() {
+        try {
+//            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            return "system";
+        } catch (Exception e) {
+            return "system";
         }
     }
 

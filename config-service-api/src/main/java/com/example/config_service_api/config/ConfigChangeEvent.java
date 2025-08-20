@@ -1,6 +1,6 @@
 package com.example.config_service_api.config;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 
 public record ConfigChangeEvent(
@@ -10,6 +10,16 @@ public record ConfigChangeEvent(
         String environment,
         String key,
         String value,
-        LocalDateTime timestamp
+        Instant timestamp,
+        String changedBy
 ) {
+    public ConfigChangeEvent {
+        if (timestamp == null) {
+            timestamp = Instant.now();
+        }
+    }
+
+    public String getEventKey() {
+        return namespace + ":" + environment + ":" + key;
+    }
 }
