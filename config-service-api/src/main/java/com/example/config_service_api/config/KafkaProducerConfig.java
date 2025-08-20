@@ -18,19 +18,23 @@ import java.util.Map;
 public class KafkaProducerConfig {
 
 
-    @Value("${kafka.bootstrap-servers:localhost:9092}")
+    // => Url do broker
+    @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 
-
+    // => Tentativas caso falhe ao enviar mensagem (default)
     @Value("${kafka.producer.retries:3}")
     private Integer retries;
 
+    // => Tamanho em bytes do lote de mensagem antes de enviar ao broker
     @Value("${kafka.producer.batch-size:16384}")
     private Integer batchSize;
 
+    // => Tempo que o producer espera antes de enviar o batch
     @Value("${kafka.producer.linger-ms:1}")
     private Integer lingerMs;
 
+    // => Mémoria todal para amazenar antes de serem enviadas. (default)
     @Value("${kafka.producer.buffer-memory:33554432}")
     private Long bufferMemory;
 
