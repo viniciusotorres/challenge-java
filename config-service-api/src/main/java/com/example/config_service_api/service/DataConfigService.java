@@ -37,19 +37,20 @@ public class DataConfigService {
     private final EnvironmentRepository environmentRepository;
     private final HistoryConfigRepository historyConfigRepository;
     private final ConfigEventProducer configEventProducer;
+    private final CacheManager cacheManager;
 
-    public DataConfigService(DataRepository dataRepository, EnvironmentRepository environmentRepository, HistoryConfigRepository historyConfigRepository, ConfigEventProducer configEventProducer) {
+    public DataConfigService(DataRepository dataRepository, EnvironmentRepository environmentRepository, HistoryConfigRepository historyConfigRepository, ConfigEventProducer configEventProducer, CacheManager cacheManager) {
         this.dataRepository = dataRepository;
         this.environmentRepository = environmentRepository;
         this.historyConfigRepository = historyConfigRepository;
         this.configEventProducer = configEventProducer;
+        this.cacheManager = cacheManager;
     }
 
     /**
      *  Cria uma nova configuração de dados.
      */
     @Transactional
-    @CachePut(value = "CONFIG_CACHE", key = "'config_' + #result.data.environmentId + '_' + #dto.key")
     public ResponseDto<DataConfigResponseDto> createDataConfig(DataConfigCreateDto dto) {
         String serviceName = "ConfigService";
         String operation = "CREATE_DATA_CONFIG";
@@ -66,6 +67,11 @@ public class DataConfigService {
 
         DataConfigResponseDto responseDto = toResponseDto(dataEntity);
 
+        cacheManager.getCache("CONFIG_CACHE").put(
+                "config_" + responseDto.environmentId() + "_" + responseDto.key(),
+                responseDto
+        );
+
         logger.info("[{}] [{}] Configuração criada com sucesso. ID: {}, Chave: {}, Ambiente: {}",
                 serviceName, operation, dataEntity.getId(), dto.key(), dto.environmentId());
 
@@ -80,7 +86,7 @@ public class DataConfigService {
     /**
      * Lista todas as configuraçõescom paginação.
      */
-    @Cacheable(value = "CONFIG_CACHE", key = "#pageable.pageNumber + '-' + #pageable.pageSize")
+    @Cacheable(value = "CONFIG_CACHE", key = "333")
     public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigs(Pageable pageable) {
         String serviceName = "ConfigService";
         String operation = "LIST_DATA_CONFIGS";
@@ -208,7 +214,7 @@ public class DataConfigService {
     /**
      * Busca uma configuração por ID.
      */
-    @Cacheable(value = "CONFIG+CACHE", key = "#id")
+    @Cacheable(value = "CONFIG+CACHE", key = "444")
     @Transactional(readOnly = true)
     public ResponseDto<DataConfigResponseDto> getDataConfigById(UUID id) {
         String serviceName = "ConfigService";
