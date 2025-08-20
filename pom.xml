@@ -5,30 +5,40 @@
 
     <modelVersion>4.0.0</modelVersion>
 
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.0</version>
+        <relativePath/>
+    </parent>
+
     <groupId>com.acme</groupId>
     <artifactId>challenge-java-feature-development</artifactId>
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>Distribution System</name>
+    <name>Challenge Java Feature Development</name>
+    <description>Multi-module project for Java feature development</description>
+
+    <properties>
+        <java.version>17</java.version>
+        <spring-boot.version>3.2.0</spring-boot.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
 
     <modules>
         <module>config-service-api</module>
         <module>config-client-starter</module>
     </modules>
 
-    <properties>
-        <java.version>17</java.version>
-        <spring.boot.version>3.5.4</spring.boot.version>
-    </properties>
-
     <dependencyManagement>
         <dependencies>
-            <!-- Importa o BOM do Spring Boot -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring.boot.version}</version>
+                <version>${spring-boot.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -38,17 +48,15 @@
     <build>
         <pluginManagement>
             <plugins>
-                <!-- Plugins comuns para todos os módulos -->
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <configuration>
-                        <release>${java.version}</release>
-                    </configuration>
+                    <version>3.11.0</version>
                 </plugin>
             </plugins>
         </pluginManagement>

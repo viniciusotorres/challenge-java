@@ -9,15 +9,15 @@ import com.example.config_service_api.enums.OperationType;
 import com.example.config_service_api.repository.DataRepository;
 import com.example.config_service_api.repository.EnvironmentRepository;
 import com.example.config_service_api.repository.HistoryConfigRepository;
+import com.example.config_service_api.utils.CustomCacheManager;
 import jakarta.persistence.EntityNotFoundException;
-import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.cglib.core.Local;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,7 +25,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -37,18 +36,20 @@ public class DataConfigService {
     private final EnvironmentRepository environmentRepository;
     private final HistoryConfigRepository historyConfigRepository;
     private final ConfigEventProducer configEventProducer;
-    private final CacheManager cacheManager;
+    private final CustomCacheManager customCacheManager;
+    private final StringRedisTemplate stringRedisTemplate;
 
-    public DataConfigService(DataRepository dataRepository, EnvironmentRepository environmentRepository, HistoryConfigRepository historyConfigRepository, ConfigEventProducer configEventProducer, CacheManager cacheManager) {
+    public DataConfigService(DataRepository dataRepository, EnvironmentRepository environmentRepository, HistoryConfigRepository historyConfigRepository, ConfigEventProducer configEventProducer, CustomCacheManager customCacheManager, StringRedisTemplate stringRedisTemplate) {
         this.dataRepository = dataRepository;
         this.environmentRepository = environmentRepository;
         this.historyConfigRepository = historyConfigRepository;
         this.configEventProducer = configEventProducer;
-        this.cacheManager = cacheManager;
+        this.customCacheManager = customCacheManager;
+        this.stringRedisTemplate = stringRedisTemplate;
     }
 
     /**
-     *  Cria uma nova configuração de dados.
+     * Cria uma nova configuração de dados.
      */
     @Transactional
     public ResponseDto<DataConfigResponseDto> createDataConfig(DataConfigCreateDto dto) {
@@ -67,10 +68,8 @@ public class DataConfigService {
 
         DataConfigResponseDto responseDto = toResponseDto(dataEntity);
 
-        cacheManager.getCache("CONFIG_CACHE").put(
-                "config_" + responseDto.environmentId() + "_" + responseDto.key(),
-                responseDto
-        );
+        String cacheKey = "CONFIG_CACHE::config_" + responseDto.id() + "_" + responseDto.key();
+        customCacheManager.saveToCache(cacheKey, responseDto);
 
         logger.info("[{}] [{}] Configuração criada com sucesso. ID: {}, Chave: {}, Ambiente: {}",
                 serviceName, operation, dataEntity.getId(), dto.key(), dto.environmentId());
@@ -86,7 +85,6 @@ public class DataConfigService {
     /**
      * Lista todas as configuraçõescom paginação.
      */
-    @Cacheable(value = "CONFIG_CACHE", key = "333")
     public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigs(Pageable pageable) {
         String serviceName = "ConfigService";
         String operation = "LIST_DATA_CONFIGS";
@@ -95,7 +93,6 @@ public class DataConfigService {
 
         Page<DataConfigResponseDto> dtoPage = dataRepository.findAll(pageable)
                 .map(this::toResponseDto);
-
 
         PageableDto<DataConfigResponseDto> pageableDto = PageableDto.<DataConfigResponseDto>builder()
                 .content(dtoPage.getContent())
@@ -106,6 +103,7 @@ public class DataConfigService {
                 .first(dtoPage.isFirst())
                 .last(dtoPage.isLast())
                 .build();
+
 
         logger.info("[{}] [{}] Listagem de configurações concluída. Total de elementos: {}, Total de páginas: {}", serviceName, operation, dtoPage.getTotalElements(), dtoPage.getTotalPages());
 
@@ -123,7 +121,6 @@ public class DataConfigService {
     /**
      * Lista as configurações  por ambiente com paginação.
      */
-    @Cacheable(value = "CONFIG_CACHE", key = "#environmentId + '-' + #pageable.pageNumber + '-' + #pageable.pageSize")
     @Transactional(readOnly = true)
     public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigsByEnvironment(UUID environmentId, Pageable pageable) {
         String serviceName = "ConfigService";
@@ -166,7 +163,6 @@ public class DataConfigService {
     /**
      * Atualiza uma configuração  existente.
      */
-    @CachePut(value = "CONFIG_CACHE", key = "'config_' + #result.data.environmentId + '_' + #dto.key")
     @Transactional
     public ResponseDto<DataConfigResponseDto> updateDataConfig(UUID id, DataConfigUpdateDto dto) {
         String serviceName = "ConfigService";
@@ -190,6 +186,12 @@ public class DataConfigService {
                     .build();
         }
 
+        if (!oldKey.equals(newKey)) {
+            String oldCacheKey = "CONFIG_CACHE::config_" + id + "_" + oldKey;
+            customCacheManager.deleteFromCache(oldCacheKey);
+            logger.info("[{}] [{}] Chave antiga invalidada: {}", serviceName, operation, oldCacheKey);
+        }
+
         applyUpdates(dataEntity, dto, serviceName, operation);
         dataRepository.save(dataEntity);
 
@@ -198,6 +200,10 @@ public class DataConfigService {
         logger.debug("[{}] [{}] Histórico da configuração atualizado com sucesso. ID: {}, Chave: {}", serviceName, operation, dataEntity.getId(), dataEntity.getKey());
 
         DataConfigResponseDto responseDto = toResponseDto(dataEntity);
+
+        String newCacheKey = "CONFIG_CACHE::config_" + id + "_" + dataEntity.getKey();
+        customCacheManager.saveToCache(newCacheKey, responseDto);
+        logger.info("[{}] [{}] Nova chave adicionada ao cache: {}", serviceName, operation, newCacheKey);
 
         logger.info("[{}] [{}] Configuração atualizada com sucesso. ID: {}, Chave: {}", serviceName, operation, id, dataEntity.getKey());
 
@@ -214,7 +220,6 @@ public class DataConfigService {
     /**
      * Busca uma configuração por ID.
      */
-    @Cacheable(value = "CONFIG+CACHE", key = "444")
     @Transactional(readOnly = true)
     public ResponseDto<DataConfigResponseDto> getDataConfigById(UUID id) {
         String serviceName = "ConfigService";
@@ -222,19 +227,32 @@ public class DataConfigService {
 
         logger.info("[{}] [{}] Buscando configuração por ID. ID: {}", serviceName, operation, id);
 
-        DataEntity dataEntity = dataRepository.findById(id)
-                .orElseThrow(() -> {
-                    logger.error("[{}] [{}] Configuração não encontrada. ID: {}", serviceName, operation, id);
-                    return new EntityNotFoundException("Configuração não encontrada");
-                });
+        String cachePattern = "CONFIG_CACHE::config_" + id + "_*";
+        DataConfigResponseDto cached = customCacheManager.getFromCache(cachePattern, DataConfigResponseDto.class);
 
+        if (cached != null) {
+            logger.info("[{}] [{}] Cache HIT", serviceName, operation);
+            return buildSuccessResponse(cached, "Dados do cache");
+        }
+
+        logger.info("[{}] [{}] Cache MISS. Buscando no banco...", serviceName, operation);
+
+
+        DataEntity dataEntity = findDataEntityById(id, serviceName, operation);
         DataConfigResponseDto responseDto = toResponseDto(dataEntity);
 
-        logger.info("[{}] [{}] Configuração encontrada. ID: {}, Chave: {}", serviceName, operation, id, dataEntity.getKey());
 
+        String cacheKey = "CONFIG_CACHE::config_" + id + "_" + dataEntity.getKey();
+        customCacheManager.saveToCache(cacheKey, responseDto);
+
+        return buildSuccessResponse(responseDto,
+                String.format("Configuração com a chave '%s' encontrada", dataEntity.getKey()));
+    }
+
+    private ResponseDto<DataConfigResponseDto> buildSuccessResponse(DataConfigResponseDto data, String message) {
         return ResponseDto.<DataConfigResponseDto>builder()
-                .data(responseDto)
-                .message(String.format("Configuração com a chave '%s' encontrada", dataEntity.getKey()))
+                .data(data)
+                .message(message)
                 .success(true)
                 .statusCode(200)
                 .build();
@@ -243,7 +261,6 @@ public class DataConfigService {
     /**
      * Exclui uma configuração por ID.
      */
-    @CacheEvict(value = "CONFIG+CACHE", key = "#id")
     public ResponseDto<Void> deleteDataConfig(UUID id) {
         String serviceName = "ConfigService";
         String operation = "DELETE_DATA_CONFIG";
@@ -256,11 +273,12 @@ public class DataConfigService {
                     return new EntityNotFoundException("Configuração não encontrada");
                 });
 
+        String cachePattern = "CONFIG_CACHE::config_" + id + "_*";
+        customCacheManager.deleteFromCache(cachePattern);
+        logger.info("[{}] [{}] Cache invalidado para padrão: {}", serviceName, operation, cachePattern);
+
         logger.info("[{}] [{}] Persistindo histórico da configuração excluída. ID: {}, Chave: {}", serviceName, operation, dataEntity.getId(), dataEntity.getKey());
-
         saveHistoryConfig(dataEntity, OperationType.DELETE, dataEntity.getValue(), null, dataEntity.getKey(), null);
-
-        logger.debug("[{}] [{}] Histórico da configuração excluída persistido com sucesso. ID: {}, Chave: {}", serviceName, operation, dataEntity.getId(), dataEntity.getKey());
 
         dataRepository.delete(dataEntity);
 
@@ -279,7 +297,6 @@ public class DataConfigService {
     /**
      * Busca o histórico de configurações por ambiente com paginação.
      */
-    @Cacheable(value = "CONFIG_CACHE", key = "#environmentId + '-' + #pageable.pageNumber + '-' + #pageable.pageSize")
     @Transactional(readOnly = true)
     public ResponseDto<PageableDto<HistoryConfigResponseDto>> getHistoryByEnvironment(UUID environmentId, Pageable pageable) {
         String serviceName = "ConfigService";
@@ -408,7 +425,7 @@ public class DataConfigService {
     // => Auxilia encontrar uma Config por ID
     private DataEntity findDataEntityById(UUID id, String serviceName, String operation) {
         logger.debug("[{}] [{}] Buscando Config no repositório. ID: {}", serviceName, operation, id);
-        return  dataRepository.findById(id)
+        return dataRepository.findById(id)
                 .orElseThrow(() -> {
                     logger.error("[{}] [{}] Configuração não encontrada. ID: {}", serviceName, operation, id);
                     return new EntityNotFoundException("Configuração não encontrada");

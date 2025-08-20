@@ -20,6 +20,7 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 @Configuration
@@ -121,9 +122,9 @@ public class RedisConfig {
             }
 
             try {
-                return objectMapper.readValue(bytes, Object.class);
+                return new String(bytes, StandardCharsets.UTF_8);
             } catch (Exception e) {
-                log.warn("Error deserializing object from Redis, returning null: {}", e.getMessage());
+                log.warn("Error deserializing from Redis, returning null: {}", e.getMessage());
                 return null;
             }
         }
