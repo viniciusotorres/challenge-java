@@ -10,7 +10,7 @@
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>challenge-java-feature-development</name>
+    <name>Distribution System</name>
 
     <modules>
         <module>config-service-api</module>

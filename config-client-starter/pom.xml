@@ -14,7 +14,7 @@
 
     <artifactId>spring-config-client-starter</artifactId>
     <packaging>jar</packaging>
-    <name>Spring Config Client Starter</name>
+    <name>Client Library SDK</name>
     <description>Spring Boot Starter para consumir Config Service API</description>
 
     <properties>
