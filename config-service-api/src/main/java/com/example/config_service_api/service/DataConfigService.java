@@ -84,17 +84,27 @@ public class DataConfigService {
                 .build();
     }
 
+
     /**
-     * Lista todas as configuraçõescom paginação.
+     * Listagem de configurações por Namespace + environment
      */
-    public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigs(Pageable pageable) {
+    public ResponseDto<PageableDto<DataConfigResponseDto>> listConfigsByNamespaceAndEnv(
+            String namespace,
+            String environment,
+            Pageable pageable) {
         String serviceName = "ConfigService";
-        String operation = "LIST_DATA_CONFIGS";
+        String operation = "LIST_CONFIGS_BY_NAMESPACE_AND_ENV";
 
-        logger.info("[{}] [{}] Iniciando listagem de configurações com paginação. Página: {}, Tamanho: {}", serviceName, operation, pageable.getPageNumber(), pageable.getPageSize());
+        logger.info("[{}] [{}] Iniciando listagem de configurações por namespace e ambiente. Namespace: {}, Ambiente: {}, Página: {}, Tamanho: {}",
+                serviceName, operation, namespace, environment, pageable.getPageNumber(), pageable.getPageSize());
 
-        Page<DataConfigResponseDto> dtoPage = dataRepository.findAll(pageable)
+        Page<DataConfigResponseDto> dtoPage = dataRepository.findByEnvironmentNamespaceNameAndEnvironmentName(namespace, environment, pageable)
                 .map(this::toResponseDto);
+
+        if (dtoPage.isEmpty()) {
+            logger.warn("[{}] [{}] Nenhuma configuração encontrada para o namespace '{}' e ambiente '{}'", serviceName, operation, namespace, environment);
+            throw new EntityNotFoundException(String.format("Nenhuma configuração encontrada para o namespace '%s' e ambiente '%s'", namespace, environment));
+        }
 
         PageableDto<DataConfigResponseDto> pageableDto = PageableDto.<DataConfigResponseDto>builder()
                 .content(dtoPage.getContent())
@@ -106,53 +116,10 @@ public class DataConfigService {
                 .last(dtoPage.isLast())
                 .build();
 
-
-        logger.info("[{}] [{}] Listagem de configurações concluída. Total de elementos: {}, Total de páginas: {}", serviceName, operation, dtoPage.getTotalElements(), dtoPage.getTotalPages());
-
-        String message = buildListMessage(pageableDto, "configuração", "configurações");
-
-
-        return ResponseDto.<PageableDto<DataConfigResponseDto>>builder()
-                .data(pageableDto)
-                .message(message)
-                .success(true)
-                .statusCode(200)
-                .build();
-    }
-
-    /**
-     * Lista as configurações  por ambiente com paginação.
-     */
-    @Transactional(readOnly = true)
-    public ResponseDto<PageableDto<DataConfigResponseDto>> listDataConfigsByEnvironment(UUID environmentId, Pageable pageable) {
-        String serviceName = "ConfigService";
-        String operation = "LIST_DATA_CONFIGS_BY_ENVIRONMENT";
-
-        logger.info("[{}] [{}] Iniciando listagem de configurações por ambiente. Ambiente ID: {}, Página: {}, Tamanho: {}",
-                serviceName, operation, environmentId, pageable.getPageNumber(), pageable.getPageSize());
-
-        Page<DataConfigResponseDto> dataPage = dataRepository.findByEnvironmentId(environmentId, pageable)
-                .map(this::toResponseDto);
-
-        if (dataPage.isEmpty()) {
-            logger.warn("[{}] [{}] Nenhuma configuração encontrada para o ambiente ID: {}", serviceName, operation, environmentId);
-            throw new EntityNotFoundException(String.format("Nenhuma configuração encontrada para o ambiente de ID: %s", environmentId));
-        }
-
-        PageableDto<DataConfigResponseDto> pageableDto = PageableDto.<DataConfigResponseDto>builder()
-                .content(dataPage.getContent())
-                .currentPage(dataPage.getNumber() + 1)
-                .pageSize(dataPage.getSize())
-                .totalElements(dataPage.getTotalElements())
-                .totalPages(dataPage.getTotalPages())
-                .first(dataPage.isFirst())
-                .last(dataPage.isLast())
-                .build();
-
-        String message = buildListMessage(pageableDto, "configuração", "configurações");
-
         logger.info("[{}] [{}] Listagem de configurações concluída. Total de elementos: {}, Total de páginas: {}",
-                serviceName, operation, dataPage.getTotalElements(), dataPage.getTotalPages());
+                serviceName, operation, dtoPage.getTotalElements(), dtoPage.getTotalPages());
+
+        String message = buildListMessage(pageableDto, "configuração", "configurações");
 
         return ResponseDto.<PageableDto<DataConfigResponseDto>>builder()
                 .data(pageableDto)
@@ -163,148 +130,178 @@ public class DataConfigService {
     }
 
     /**
-     * Atualiza uma configuração  existente.
+     * Atualiza uma configuração existente.
      */
     @Transactional
-    public ResponseDto<DataConfigResponseDto> updateDataConfig(UUID id, DataConfigUpdateDto dto) {
+    public ResponseDto<DataConfigResponseDto> updateDataConfig(String namespace, String environment, String key, String newValue) {
         String serviceName = "ConfigService";
         String operation = "UPDATE_DATA_CONFIG";
 
-        logger.info("[{}] [{}] Iniciando atualização de configuração. ID: {}, Chave: {}", serviceName, operation, id, dto.key());
+        logger.info("[{}] [{}] Iniciando atualização de configuração. Namespace: {}, Environment: {}, Key: {}",
+                serviceName, operation, namespace, environment, key);
 
-        DataEntity dataEntity = findDataEntityById(id, serviceName, operation);
 
-        String oldKey = dataEntity.getKey();
+        DataEntity dataEntity = dataRepository
+                .findByKeyAndEnvironmentNamespaceNameAndEnvironmentName(key, namespace, environment)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        String.format("Configuração '%s' não encontrada para namespace '%s' e ambiente '%s'",
+                                key, namespace, environment)));
+
         String oldValue = dataEntity.getValue();
-        String newKey = dto.key();
-        String newValue = dto.value();
 
-        if (!hasUpdate(dto)) {
-            logger.warn("[{}] [{}] Nenhum dado para atualizar. ID: {}, Chave: {}", serviceName, operation, id, dto.key());
+        if (oldValue != null && oldValue.equals(newValue)) {
+            logger.warn("[{}] [{}] Nenhum dado para atualizar. Key: {}, Valor atual já é: {}",
+                    serviceName, operation, key, newValue);
             return ResponseDto.<DataConfigResponseDto>builder()
-                    .message("Nenhum dado para atualizar")
-                    .success(false)
-                    .statusCode(400)
+                    .data(toResponseDto(dataEntity))
+                    .message("Configuração já possui o valor informado")
+                    .success(true)
+                    .statusCode(304)
                     .build();
         }
 
-        if (!oldKey.equals(newKey)) {
-            String oldCacheKey = "CONFIG_CACHE::config_" + id + "_" + oldKey;
-            customCacheManager.deleteFromCache(oldCacheKey);
-            logger.info("[{}] [{}] Chave antiga invalidada: {}", serviceName, operation, oldCacheKey);
-        }
+        String cacheKey = "CONFIG_CACHE::config_" + dataEntity.getId() + "_" + key;
 
-        applyUpdates(dataEntity, dto, serviceName, operation);
+        dataEntity.setValue(newValue);
         dataRepository.save(dataEntity);
 
-        logger.info("[{}] [{}] Persistindo histórico da configuração atualizada. ID: {}, Chave: {}", serviceName, operation, dataEntity.getId(), dataEntity.getKey());
-        saveHistoryConfig(dataEntity, OperationType.UPDATE, oldValue, newValue, oldKey, newKey);
-        logger.debug("[{}] [{}] Histórico da configuração atualizado com sucesso. ID: {}, Chave: {}", serviceName, operation, dataEntity.getId(), dataEntity.getKey());
+        logger.info("[{}] [{}] Persistindo histórico da configuração atualizada. ID: {}, Key: {}",
+                serviceName, operation, dataEntity.getId(), key);
+
+        saveHistoryConfig(dataEntity, OperationType.UPDATE, oldValue, newValue, null, key);
 
         DataConfigResponseDto responseDto = toResponseDto(dataEntity);
 
-        String newCacheKey = "CONFIG_CACHE::config_" + id + "_" + dataEntity.getKey();
-        customCacheManager.saveToCache(newCacheKey, responseDto);
-        logger.info("[{}] [{}] Nova chave adicionada ao cache: {}", serviceName, operation, newCacheKey);
+        customCacheManager.saveToCache(cacheKey, responseDto);
+        logger.info("[{}] [{}] Cache atualizado: {}", serviceName, operation, cacheKey);
 
-        logger.info("[{}] [{}] Configuração atualizada com sucesso. ID: {}, Chave: {}", serviceName, operation, id, dataEntity.getKey());
+        logger.info("[{}] [{}] Configuração atualizada com sucesso. ID: {}, Key: {}, Old Value: {}, New Value: {}",
+                serviceName, operation, dataEntity.getId(), key, oldValue, newValue);
 
         sendConfigEventToKafka(dataEntity, "UPDATE", serviceName, operation);
 
         return ResponseDto.<DataConfigResponseDto>builder()
                 .data(responseDto)
-                .message(String.format("Configuração com a chave '%s' atualizada com sucesso", dataEntity.getKey()))
+                .message(String.format("Configuração '%s' atualizada com sucesso", key))
                 .success(true)
                 .statusCode(200)
                 .build();
     }
 
     /**
-     * Busca uma configuração por ID.
+     * Busca uma configuração específica por namespace, environment e key
      */
-    @Transactional(readOnly = true)
-    public ResponseDto<DataConfigResponseDto> getDataConfigById(UUID id) {
+    public ResponseDto<DataConfigResponseDto> getDataConfig(String namespace, String environment, String key) {
         String serviceName = "ConfigService";
-        String operation = "GET_DATA_CONFIG_BY_ID";
+        String operation = "GET_DATA_CONFIG";
 
-        logger.info("[{}] [{}] Buscando configuração por ID. ID: {}", serviceName, operation, id);
+        logger.info("[{}] [{}] Buscando configuração. Namespace: {}, Environment: {}, Key: {}",
+                serviceName, operation, namespace, environment, key);
 
-        String cachePattern = "CONFIG_CACHE::config_" + id + "_*";
+        DataEntity dataEntity = dataRepository
+                .findByKeyAndEnvironmentNamespaceNameAndEnvironmentName(key, namespace, environment)
+                .orElseThrow(() -> {
+                    logger.error("[{}] [{}] Configuração não encontrada - Namespace: {}, Environment: {}, Key: {}",
+                            serviceName, operation, namespace, environment, key);
+                    return new EntityNotFoundException(
+                            String.format("Configuração '%s' não encontrada para namespace '%s' e ambiente '%s'",
+                                    key, namespace, environment));
+                });
+
+        String cachePattern = "CONFIG_CACHE::config_" + dataEntity.getId() + "_*";
         DataConfigResponseDto cached = customCacheManager.getFromCache(cachePattern, DataConfigResponseDto.class);
 
         if (cached != null) {
-            logger.info("[{}] [{}] Cache HIT", serviceName, operation);
+            logger.info("[{}] [{}] Cache HIT para Key: {}", serviceName, operation, key);
             return buildSuccessResponse(cached, "Dados do cache");
         }
 
-        logger.info("[{}] [{}] Cache MISS. Buscando no banco...", serviceName, operation);
+        logger.info("[{}] [{}] Cache MISS. Dados obtidos do banco. Key: {}", serviceName, operation, key);
 
-
-        DataEntity dataEntity = findDataEntityById(id, serviceName, operation);
         DataConfigResponseDto responseDto = toResponseDto(dataEntity);
 
 
-        String cacheKey = "CONFIG_CACHE::config_" + id + "_" + dataEntity.getKey();
+        String cacheKey = "CONFIG_CACHE::config_" + dataEntity.getId() + "_" + key;
         customCacheManager.saveToCache(cacheKey, responseDto);
 
-        return buildSuccessResponse(responseDto,
-                String.format("Configuração com a chave '%s' encontrada", dataEntity.getKey()));
-    }
+        logger.info("[{}] [{}] Configuração encontrada e cached. Key: {}, ID: {}",
+                serviceName, operation, key, dataEntity.getId());
 
-    private ResponseDto<DataConfigResponseDto> buildSuccessResponse(DataConfigResponseDto data, String message) {
-        return ResponseDto.<DataConfigResponseDto>builder()
-                .data(data)
-                .message(message)
-                .success(true)
-                .statusCode(200)
-                .build();
+        return buildSuccessResponse(responseDto,
+                String.format("Configuração '%s' encontrada com sucesso", key));
     }
 
     /**
-     * Exclui uma configuração por ID.
+     * Deleta uma configuração específica por namespace, environment e key
      */
-    public ResponseDto<Void> deleteDataConfig(UUID id) {
+    @Transactional
+    public ResponseDto<DataConfigResponseDto> deleteDataConfig(String namespace, String environment, String key) {
         String serviceName = "ConfigService";
         String operation = "DELETE_DATA_CONFIG";
 
-        logger.info("[{}] [{}] Iniciando exclusão de configuração. ID: {}", serviceName, operation, id);
+        logger.info("[{}] [{}] Iniciando exclusão de configuração. Namespace: {}, Environment: {}, Key: {}",
+                serviceName, operation, namespace, environment, key);
 
-        DataEntity dataEntity = dataRepository.findById(id)
+        DataEntity dataEntity = dataRepository
+                .findByKeyAndEnvironmentNamespaceNameAndEnvironmentName(key, namespace, environment)
                 .orElseThrow(() -> {
-                    logger.error("[{}] [{}] Configuração não encontrada para exclusão - ID: {}", serviceName, operation, id);
-                    return new EntityNotFoundException("Configuração não encontrada");
+                    logger.error("[{}] [{}] Configuração não encontrada para exclusão - Namespace: {}, Environment: {}, Key: {}",
+                            serviceName, operation, namespace, environment, key);
+                    return new EntityNotFoundException(
+                            String.format("Configuração '%s' não encontrada para namespace '%s' e ambiente '%s'",
+                                    key, namespace, environment));
                 });
 
-        String cachePattern = "CONFIG_CACHE::config_" + id + "_*";
+
+        DataConfigResponseDto responseDto = toResponseDto(dataEntity);
+        String deletedValue = dataEntity.getValue();
+        UUID dataId = dataEntity.getId();
+
+        String cachePattern = "CONFIG_CACHE::config_" + dataId + "_*";
         customCacheManager.deleteFromCache(cachePattern);
         logger.info("[{}] [{}] Cache invalidado para padrão: {}", serviceName, operation, cachePattern);
 
-        logger.info("[{}] [{}] Persistindo histórico da configuração excluída. ID: {}, Chave: {}", serviceName, operation, dataEntity.getId(), dataEntity.getKey());
-        saveHistoryConfig(dataEntity, OperationType.DELETE, dataEntity.getValue(), null, dataEntity.getKey(), null);
+        logger.info("[{}] [{}] Persistindo histórico da configuração excluída. ID: {}, Key: {}",
+                serviceName, operation, dataId, key);
+        saveHistoryConfig(dataEntity, OperationType.DELETE, deletedValue, null, key, null);
 
         dataRepository.delete(dataEntity);
 
         sendConfigEventToKafka(dataEntity, "DELETE", serviceName, operation);
 
-        logger.info("[{}] [{}] Configuração excluída com sucesso. ID: {}", serviceName, operation, id);
+        logger.info("[{}] [{}] Configuração excluída com sucesso. Namespace: {}, Environment: {}, Key: {}, ID: {}",
+                serviceName, operation, namespace, environment, key, dataId);
 
-        return ResponseDto.<Void>builder()
-                .message(String.format("Configuração com a chave '%s' excluída com sucesso", dataEntity.getKey()))
+        return ResponseDto.<DataConfigResponseDto>builder()
+                .data(responseDto)
+                .message(String.format("Configuração '%s' excluída com sucesso", key))
                 .success(true)
                 .statusCode(200)
                 .build();
     }
 
-
     /**
-     * Busca o histórico de configurações por ambiente com paginação.
+     * Busca o histórico de configurações por namespace e ambiente com paginação.
      */
     @Transactional(readOnly = true)
-    public ResponseDto<PageableDto<HistoryConfigResponseDto>> getHistoryByEnvironment(UUID environmentId, Pageable pageable) {
+    public ResponseDto<PageableDto<HistoryConfigResponseDto>> getHistory(String namespace, String environment, Pageable pageable) {
         String serviceName = "ConfigService";
         String operation = "GET_HISTORY_BY_ENVIRONMENT";
 
-        logger.info("[{}] [{}] Iniciando busca de histórico por ambiente. Ambiente ID: {}", serviceName, operation, environmentId);
+        logger.info("[{}] [{}] Iniciando busca de histórico. Namespace: {}, Environment: {}, Página: {}, Tamanho: {}",
+                serviceName, operation, namespace, environment, pageable.getPageNumber(), pageable.getPageSize());
+
+        EnvironmentEntity environmentEntity = environmentRepository
+                .findByNamespaceNameAndName(namespace, environment)
+                .orElseThrow(() -> {
+                    logger.error("[{}] [{}] Ambiente não encontrado - Namespace: {}, Environment: {}",
+                            serviceName, operation, namespace, environment);
+                    return new EntityNotFoundException(
+                            String.format("Ambiente '%s' não encontrado para namespace '%s'", environment, namespace));
+                });
+
+        UUID environmentId = environmentEntity.getId();
+        logger.debug("[{}] [{}] Environment encontrado. ID: {}", serviceName, operation, environmentId);
 
         Page<HistoryConfigEntity> historyEntities = fetchHistoryEntities(environmentId, pageable, serviceName, operation);
 
@@ -312,11 +309,22 @@ public class DataConfigService {
 
         PageableDto<HistoryConfigResponseDto> pageableDto = buildPageableDto(historyEntities, historyDtos);
 
-        logger.info("[{}] [{}] Busca de histórico concluída. Total de elementos: {}", serviceName, operation, historyEntities.getTotalElements());
+        logger.info("[{}] [{}] Histórico encontrado. Namespace: {}, Environment: {}, Total: {}, Páginas: {}",
+                serviceName, operation, namespace, environment, historyEntities.getTotalElements(), historyEntities.getTotalPages());
 
         return ResponseDto.<PageableDto<HistoryConfigResponseDto>>builder()
                 .data(pageableDto)
-                .message(String.format("Histórico encontrado para o ambiente com ID: %s", environmentId))
+                .message(String.format("Histórico encontrado para namespace '%s' e ambiente '%s'", namespace, environment))
+                .success(true)
+                .statusCode(200)
+                .build();
+    }
+
+    // => Auxilia a buildar o retorno de sucesso
+    private ResponseDto<DataConfigResponseDto> buildSuccessResponse(DataConfigResponseDto data, String message) {
+        return ResponseDto.<DataConfigResponseDto>builder()
+                .data(data)
+                .message(message)
                 .success(true)
                 .statusCode(200)
                 .build();
@@ -333,7 +341,6 @@ public class DataConfigService {
 
         return historyEntities;
     }
-
 
     // => Auxilia mapear HistoryConfigEntity para HistoryConfigResponseDto
     private List<HistoryConfigResponseDto> mapToDto(Page<HistoryConfigEntity> historyEntities) {
@@ -365,28 +372,6 @@ public class DataConfigService {
                 .build();
     }
 
-    // => Auxilia verificar se há atualizações a serem aplicadas
-    private boolean hasUpdate(DataConfigUpdateDto dto) {
-        return (dto.key() != null && !dto.key().isBlank()) || (dto.value() != null && !dto.value().isBlank());
-    }
-
-    // => Auxilia aplicar as atualizações no DataEntity
-    private void applyUpdates(DataEntity entity, DataConfigUpdateDto dto, String serviceName, String operation) {
-        if (dto.key() != null && !dto.key().isBlank() && !dto.key().equals(entity.getKey())) {
-            validateKeyUniqueness(entity, dto.key(), serviceName, operation);
-            logger.debug("[{}] [{}] Atualizando chave da configuração. ID: {}, De: {}, Para: {}",
-                    serviceName, operation, entity.getId(), entity.getKey(), dto.key());
-            entity.setKey(dto.key().trim());
-        }
-
-        if (dto.value() != null && !dto.value().isBlank() && !dto.value().equals(entity.getValue())) {
-            logger.debug("[{}] [{}] Atualizando valor da configuração. ID: {}, De: {}, Para: {}",
-                    serviceName, operation, entity.getId(), entity.getValue(), dto.value());
-            entity.setValue(dto.value().trim());
-        }
-
-    }
-
     // => Auxilia validar a unicidade da chave
     private void validateKeyUniqueness(DataEntity entity, String newKey, String serviceName, String operation) {
         if (!entity.getKey().equals(newKey) &&
@@ -406,14 +391,14 @@ public class DataConfigService {
         int pageSize = pageableDto.pageSize();
 
         if (totalElements == 0) {
-            return String.format("Nenhum %s encontrada. Página %d de %d, Tamanho da página: %d",
-                    singular, currentPage, totalPages, pageSize);
+            return "Nenhuma " + singular + " encontrada. Página " + currentPage +
+                    " de " + totalPages + ", Tamanho da página: " + pageSize;
         } else if (totalElements == 1) {
-            return String.format("1 %s encontrada. Página %d de %d, Tamanho da página: %d",
-                    singular, currentPage, totalPages, pageSize);
+            return "1 " + singular + " encontrada. Página " + currentPage +
+                    " de " + totalPages + ", Tamanho da página: " + pageSize;
         } else {
-            return String.format("%d %s encontradas. Página %d de %d, Tamanho da página: %d",
-                    totalElements, plural, currentPage, totalPages, pageSize);
+            return totalElements + " " + plural + " encontradas. Página " + currentPage +
+                    " de " + totalPages + ", Tamanho da página: " + pageSize;
         }
     }
 
@@ -422,16 +407,6 @@ public class DataConfigService {
         logger.debug("[{}] [{}] Buscando ambiente no repositório. Ambiente ID: {}", serviceName, operation, environmentId);
         return environmentRepository.findById(environmentId)
                 .orElseThrow(() -> new EntityNotFoundException("Ambiente não encontrado"));
-    }
-
-    // => Auxilia encontrar uma Config por ID
-    private DataEntity findDataEntityById(UUID id, String serviceName, String operation) {
-        logger.debug("[{}] [{}] Buscando Config no repositório. ID: {}", serviceName, operation, id);
-        return dataRepository.findById(id)
-                .orElseThrow(() -> {
-                    logger.error("[{}] [{}] Configuração não encontrada. ID: {}", serviceName, operation, id);
-                    return new EntityNotFoundException("Configuração não encontrada");
-                });
     }
 
     // => Auxilia validar a duplicidade da configuração

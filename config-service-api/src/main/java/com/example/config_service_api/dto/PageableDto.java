@@ -9,7 +9,7 @@ public record PageableDto<T>(
         List<T> content,
         int currentPage,
         int pageSize,
-        Long totalElements,
+        long totalElements,
         int totalPages,
         boolean first,
         boolean last

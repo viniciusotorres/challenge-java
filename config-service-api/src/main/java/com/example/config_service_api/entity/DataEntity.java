@@ -32,8 +32,7 @@ public class DataEntity {
     private String key;
 
     @NotBlank
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String value;
 
     @CreatedDate

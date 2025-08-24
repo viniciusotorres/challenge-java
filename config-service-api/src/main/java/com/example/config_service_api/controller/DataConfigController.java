@@ -32,50 +32,75 @@ public class DataConfigController {
         return respondWithLogging(response, response.statusCode(), response.message());
     }
 
-    @GetMapping("/list")
-    public ResponseEntity<ResponseDto<PageableDto<DataConfigResponseDto>>> listDataConfigs(Pageable pageable) {
-        logger.info("Requisição recebida [GET /data-config/list]");
-        ResponseDto<PageableDto<DataConfigResponseDto>> response = dataConfigService.listDataConfigs(pageable);
+    @GetMapping("/{namespace}/{environment}/configs")
+    public ResponseEntity<ResponseDto<PageableDto<DataConfigResponseDto>>> listConfigs(
+            @PathVariable String namespace,
+            @PathVariable String environment,
+            Pageable pageable) {
+
+        logger.info("Requisição recebida [GET /data-config/{}/{}/configs", namespace, environment);
+
+        ResponseDto<PageableDto<DataConfigResponseDto>> response =
+                dataConfigService.listConfigsByNamespaceAndEnv(namespace, environment, pageable);
+
         return respondWithLogging(response, response.statusCode(), response.message());
     }
 
 
-    @GetMapping("/list-by-environment/{environmentId}")
-    public ResponseEntity<ResponseDto<PageableDto<DataConfigResponseDto>>> listDataConfigsByEnvironment(
-            @PathVariable UUID environmentId, Pageable pageable) {
-        logger.info("Requisição recebida [GET /data-config/list-by-environment/{}]", environmentId);
-        ResponseDto<PageableDto<DataConfigResponseDto>> response = dataConfigService.listDataConfigsByEnvironment(environmentId, pageable);
-        return respondWithLogging(response, response.statusCode(), response.message());
-    }
-
-    @PutMapping("/update/{id}")
+    @PutMapping("/{namespace}/{environment}/configs/{key}")
     @Transactional
-    public ResponseEntity<ResponseDto> updateDataConfig(@PathVariable UUID id, @Valid @RequestBody DataConfigUpdateDto dataConfigUpdateDto) {
-        logger.info("Requisição recebida [PUT /data-config/update/{}] - Corpo da requisição: {}", id, dataConfigUpdateDto);
-        ResponseDto response = dataConfigService.updateDataConfig(id, dataConfigUpdateDto);
+    public ResponseEntity<ResponseDto> updateDataConfig(
+            @PathVariable String namespace,
+            @PathVariable String environment,
+            @PathVariable String key,
+            @RequestBody String value) {
+
+        logger.info("Requisição recebida [PUT /data-config/{}/{}/configs/{}] - Novo valor: {}",
+                namespace, environment, key, value);
+
+        ResponseDto response = dataConfigService.updateDataConfig(namespace, environment, key, value);
         return respondWithLogging(response, response.statusCode(), response.message());
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<ResponseDto> getDataConfigById(@PathVariable UUID id) {
-        logger.info("Requisição recebida [GET /data-config/{}]", id);
-        ResponseDto response = dataConfigService.getDataConfigById(id);
+
+    @GetMapping("/{namespace}/{environment}/configs/{key}")
+    public ResponseEntity<ResponseDto> getDataConfig(
+            @PathVariable String namespace,
+            @PathVariable String environment,
+            @PathVariable String key) {
+
+        logger.info("Requisição recebida [GET /data-config/{}/{}/configs/{}]",
+                namespace, environment, key);
+
+        ResponseDto response = dataConfigService.getDataConfig(namespace, environment, key);
         return respondWithLogging(response, response.statusCode(), response.message());
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<ResponseDto> deleteDataConfig(@PathVariable UUID id) {
-        logger.info("Requisição recebida [DELETE /data-config/{}]", id);
-        ResponseDto response = dataConfigService.deleteDataConfig(id);
+    @DeleteMapping("/{namespace}/{environment}/configs/{key}")
+    @Transactional
+    public ResponseEntity<ResponseDto> deleteDataConfig(
+            @PathVariable String namespace,
+            @PathVariable String environment,
+            @PathVariable String key) {
+
+        logger.info("Requisição recebida [DELETE /data-config/{}/{}/configs/{}]",
+                namespace, environment, key);
+
+        ResponseDto response = dataConfigService.deleteDataConfig(namespace, environment, key);
         return respondWithLogging(response, response.statusCode(), response.message());
     }
 
-    @GetMapping("/history-by-environment/{environmentId}")
-    public ResponseEntity<ResponseDto<PageableDto<HistoryConfigResponseDto>>> getHistoryByEnvironment(
-            @PathVariable UUID environmentId, Pageable pageable) {
-        logger.info("Requisição recebida [GET /data-config/history-by-environment/{}]", environmentId);
+    @GetMapping("/{namespace}/{environment}/history")
+    public ResponseEntity<ResponseDto<PageableDto<HistoryConfigResponseDto>>> getHistory(
+            @PathVariable String namespace,
+            @PathVariable String environment,
+            Pageable pageable) {
 
-        ResponseDto<PageableDto<HistoryConfigResponseDto>> response = dataConfigService.getHistoryByEnvironment(environmentId, pageable);
+        logger.info("Requisição recebida [GET /data-config/{}/{}/history]",
+                namespace, environment);
+
+        ResponseDto<PageableDto<HistoryConfigResponseDto>> response =
+                dataConfigService.getHistory(namespace, environment, pageable);
 
         return respondWithLogging(response, response.statusCode(), response.message());
     }

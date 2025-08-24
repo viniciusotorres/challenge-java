@@ -13,4 +13,5 @@ public interface EnvironmentRepository extends JpaRepository<EnvironmentEntity, 
     boolean existsByName(String name);
     Page<EnvironmentEntity> findByNamespaceId(UUID namespaceId, Pageable pageable);
     boolean existsByNamespaceId(UUID namespaceId);
+    Optional<EnvironmentEntity> findByNamespaceNameAndName(String namespaceName, String environmentName);
 }
