@@ -1,8 +1,7 @@
 // Java
-package com.acme.config_client_starter.config;
+package com.acme.config_client_starter;
 
 import com.acme.config_client_starter.service.ConfigClientService;
-import com.acme.config_client_starter.ConfigClientProperties;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;

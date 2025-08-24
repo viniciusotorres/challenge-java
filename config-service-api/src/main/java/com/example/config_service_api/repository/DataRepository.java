@@ -13,6 +13,10 @@ import java.util.UUID;
 public interface DataRepository extends JpaRepository<DataEntity, UUID> {
     boolean existsByKeyAndEnvironmentId(String key, UUID environmentId);
 
-    Page<DataEntity> findByEnvironmentId(UUID environmentId, Pageable pageable);
-    Optional<DataEntity> findByKeyAndEnvironmentId(String key, UUID environmentId);
+    Page<DataEntity> findByEnvironmentNamespaceNameAndEnvironmentName(
+            String namespaceName,
+            String environmentName,
+            Pageable pageable);
+
+    Optional<DataEntity> findByKeyAndEnvironmentNamespaceNameAndEnvironmentName(String namespaceName, String environmentName, String key);
 }
