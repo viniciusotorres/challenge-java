@@ -1,5 +1,5 @@
 // Java
-package com.acme.config_client_starter.config;
+package com.acme.config_client_starter.configuration;
 
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;

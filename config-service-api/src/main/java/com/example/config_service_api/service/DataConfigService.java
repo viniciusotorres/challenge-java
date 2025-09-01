@@ -455,20 +455,8 @@ public class DataConfigService {
         );
 
         try {
-            configEventProducer.sendConfigChange(event, (result, ex) -> {
-                if (ex == null) {
-                    logger.info("[{}] [{}] Evento '{}' enviado com sucesso. Config ID: {}, Chave: {}, Partition: {}, Offset: {}",
-                            serviceName, operation, action, dataEntity.getId(), dataEntity.getKey(),
-                            result.getRecordMetadata().partition(), result.getRecordMetadata().offset());
-
-                } else {
-                    logger.warn("[{}] [{}] Falha ao enviar evento '{}'. Config ID: {}, Chave: {}. Erro: {}",
-                            serviceName, operation, action, dataEntity.getId(), dataEntity.getKey(), ex.getMessage());
-
-                }
-            });
-
-            logger.debug("[{}] [{}] Evento '{}' submetido para envio. Config ID: {}, Chave: {}",
+            configEventProducer.sendConfigChange(event);
+            logger.info("[{}] [{}] Evento '{}' enviado para Kafka com sucesso. Config ID: {}, Chave: {}",
                     serviceName, operation, action, dataEntity.getId(), dataEntity.getKey());
 
         } catch (Exception ex) {
