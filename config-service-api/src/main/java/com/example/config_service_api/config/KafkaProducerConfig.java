@@ -38,6 +38,9 @@ public class KafkaProducerConfig {
     @Value("${kafka.producer.buffer-memory:33554432}")
     private Long bufferMemory;
 
+    @Value("${kafka.topic.config-changes:config-changes}")
+    private String topicName;
+
     @Bean
     public ProducerFactory<String, ConfigChangeEvent> producerFactory() {
         Map<String, Object> configProps = new HashMap<>();
@@ -63,5 +66,9 @@ public class KafkaProducerConfig {
     @Bean
     public KafkaTemplate<String, ConfigChangeEvent> kafkaTemplate() {
        return new KafkaTemplate<>(producerFactory());
+    }
+
+    public String getTopicName() {
+        return topicName;
     }
 }
